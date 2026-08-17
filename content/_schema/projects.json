@@ -47,17 +47,10 @@
     },
     {
       "name": "bodyHtml",
-      "label": "Page text",
+      "label": "Page content",
       "type": "richtext",
       "group": "Content",
-      "help": "Edit the copy directly. Bold, italic and links are available; the layout and animations are left untouched."
-    },
-    {
-      "name": "bodyHtml",
-      "label": "Images in this case study",
-      "type": "images",
-      "group": "Images",
-      "help": "Replace an image or give it alt text. Changes are written straight into the page."
+      "help": "Text and images in page order. Edit copy directly, replace images and give them alt text. The layout and animations are left untouched."
     },
     {
       "name": "seo.title",

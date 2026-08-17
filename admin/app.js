@@ -488,6 +488,31 @@ function seoPreview(draft) {
 const refreshSeoPreview = () =>
   document.querySelector(".seo-preview")?.dispatchEvent(new CustomEvent("seo:refresh"));
 
+/**
+ * Text and images together, in the order they appear on the page.
+ *
+ * findTextBlocks skips any element containing an <img>, so the two sets never
+ * overlap and can be merged by position into a single document view.
+ */
+function findBodyBlocks(html) {
+  const source = String(html || "");
+
+  const text = findTextBlocks(source).map((b, i) => ({
+    ...b, kind: "text", index: i, at: b.innerStart,
+  }));
+
+  const images = [...source.matchAll(IMG_TAG_RE)].map((m, i) => ({
+    kind: "image",
+    index: i,
+    at: m.index,
+    tag: m[0],
+    src: getAttr(m[0], "src"),
+    alt: getAttr(m[0], "alt"),
+  }));
+
+  return [...text, ...images].sort((a, b) => a.at - b.at);
+}
+
 /** Human label for a block, so you can tell which bit of the page it is. */
 function blockLabel(block) {
   if (/^h[1-6]$/.test(block.tag)) return block.tag.toUpperCase();
@@ -509,85 +534,140 @@ function richTextPanel(draft, fieldName, markDirty) {
 
   const rebuild = () => {
     const html = getField(draft, fieldName);
-    const blocks = findTextBlocks(html);
+    const blocks = findBodyBlocks(html);
 
     if (!blocks.length) {
-      wrap.replaceChildren(el("p", { className: "hint" }, "No editable text found in this page."));
+      wrap.replaceChildren(el("p", { className: "hint" }, "Nothing editable found in this page."));
       return;
     }
 
+    const texts = blocks.filter((b) => b.kind === "text").length;
+    const images = blocks.length - texts;
+
     wrap.replaceChildren(
       el("p", { className: "hint" },
-        `${blocks.length} text block${blocks.length === 1 ? "" : "s"}. ` +
-        "Edit directly; the page layout and animations are left untouched."),
-      ...blocks.map((block, i) => {
-        const editor = el("div", { className: "rt-editable" });
-        editor.contentEditable = "true";
-        editor.innerHTML = block.inner;
-        editor.spellcheck = true;
-
-        // Blocks are located by offset, so committing on blur avoids
-        // recomputing positions on every keystroke.
-        const commit = () => {
-          const cleaned = sanitizeInline(editor.innerHTML);
-          if (cleaned === block.inner) return;
-          const current = getField(draft, fieldName);
-          const fresh = findTextBlocks(current)[i];
-          if (!fresh) return;
-          setField(draft, fieldName, replaceTextBlock(current, fresh, cleaned));
-          block.inner = cleaned;
-          markDirty();
-        };
-        editor.addEventListener("blur", commit);
-
-        // Paste as plain text: pasted markup would drag foreign styling in.
-        editor.addEventListener("paste", (e) => {
-          e.preventDefault();
-          const text = (e.clipboardData || window.clipboardData).getData("text/plain");
-          document.execCommand("insertText", false, text);
-        });
-
-        // Enter inserts a line break rather than a new block, which would
-        // change the document structure.
-        editor.addEventListener("keydown", (e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            document.execCommand("insertLineBreak");
-          }
-        });
-
-        const cmd = (name, label, title) =>
-          el("button", {
-            className: "rt-btn", title,
-            // Keep focus in the editable so the command applies to the selection.
-            onmousedown: (e) => { e.preventDefault(); document.execCommand(name); commit(); },
-          }, label);
-
-        const linkBtn = el("button", {
-          className: "rt-btn", title: "Add or edit a link",
-          onmousedown: (e) => {
-            e.preventDefault();
-            const url = prompt("Link URL (leave empty to remove the link):", "");
-            if (url === null) return;
-            document.execCommand(url ? "createLink" : "unlink", false, url || undefined);
-            commit();
-          },
-        }, "Link");
-
-        return el("div", { className: "rt-block" },
-          el("div", { className: "rt-head" },
-            el("span", { className: "rt-tag" }, blockLabel(block)),
-            el("div", { className: "rt-tools" },
-              cmd("bold", "B", "Bold"), cmd("italic", "I", "Italic"), linkBtn)
-          ),
-          editor
-        );
-      })
+        `${texts} text block${texts === 1 ? "" : "s"} and ${images} image${images === 1 ? "" : "s"}, ` +
+        "in the order they appear on the page. The layout and animations are left untouched."),
+      ...blocks.map((block) => (block.kind === "image"
+        ? imageBlockRow(block, draft, fieldName, markDirty, rebuild)
+        : textBlockRow(block, draft, fieldName, markDirty)))
     );
   };
 
   rebuild();
   return wrap;
+}
+
+/** One image, inline in the document flow: preview, replace, alt text. */
+function imageBlockRow(block, draft, fieldName, markDirty, rebuild) {
+  const preview = el("img", { src: "../" + block.src.replace(/^\//, ""), alt: "", loading: "lazy" });
+  preview.onerror = () => preview.classList.add("missing");
+
+  const altInput = el("input", {
+    type: "text",
+    value: block.alt,
+    placeholder: "Describe this image…",
+    className: block.alt ? "" : "needs-alt",
+  });
+  altInput.oninput = () => {
+    setField(draft, fieldName,
+      updateBodyImage(getField(draft, fieldName), block.index, { alt: altInput.value }));
+    altInput.className = altInput.value ? "" : "needs-alt";
+    markDirty();
+  };
+
+  const replace = el("button", {
+    className: "btn small",
+    onclick: async () => {
+      const picked = await pickImage();
+      if (!picked) return;
+      setField(draft, fieldName,
+        updateBodyImage(getField(draft, fieldName), block.index, { src: picked }));
+      markDirty();
+      rebuild();
+    },
+  }, "Replace");
+
+  return el("div", { className: "rt-block is-image" },
+    el("div", { className: "rt-head" },
+      el("span", { className: "rt-tag" }, "Image"),
+      el("div", { className: "rt-tools" }, replace)
+    ),
+    el("div", { className: "img-row" },
+      el("div", { className: "img-row-thumb" }, preview),
+      el("div", { className: "img-row-body" },
+        el("code", { className: "src-label" }, block.src.split("/").pop() || block.src),
+        el("label", { className: "alt-label" }, "Alt text"),
+        altInput
+      )
+    )
+  );
+}
+
+/** One editable text block. */
+function textBlockRow(block, draft, fieldName, markDirty) {
+  const i = block.index;
+  const editor = el("div", { className: "rt-editable" });
+  editor.contentEditable = "true";
+  editor.innerHTML = block.inner;
+  editor.spellcheck = true;
+
+  // Blocks are located by offset, so committing on blur avoids
+  // recomputing positions on every keystroke.
+  const commit = () => {
+    const cleaned = sanitizeInline(editor.innerHTML);
+    if (cleaned === block.inner) return;
+    const current = getField(draft, fieldName);
+    const fresh = findTextBlocks(current)[i];
+    if (!fresh) return;
+    setField(draft, fieldName, replaceTextBlock(current, fresh, cleaned));
+    block.inner = cleaned;
+    markDirty();
+  };
+  editor.addEventListener("blur", commit);
+
+  // Paste as plain text: pasted markup would drag foreign styling in.
+  editor.addEventListener("paste", (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+    document.execCommand("insertText", false, text);
+  });
+
+  // Enter inserts a line break rather than a new block, which would
+  // change the document structure.
+  editor.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      document.execCommand("insertLineBreak");
+    }
+  });
+
+  const cmd = (name, label, title) =>
+    el("button", {
+      className: "rt-btn", title,
+      // Keep focus in the editable so the command applies to the selection.
+      onmousedown: (e) => { e.preventDefault(); document.execCommand(name); commit(); },
+    }, label);
+
+  const linkBtn = el("button", {
+    className: "rt-btn", title: "Add or edit a link",
+    onmousedown: (e) => {
+      e.preventDefault();
+      const url = prompt("Link URL (leave empty to remove the link):", "");
+      if (url === null) return;
+      document.execCommand(url ? "createLink" : "unlink", false, url || undefined);
+      commit();
+    },
+  }, "Link");
+
+  return el("div", { className: "rt-block" },
+    el("div", { className: "rt-head" },
+      el("span", { className: "rt-tag" }, blockLabel(block)),
+      el("div", { className: "rt-tools" },
+        cmd("bold", "B", "Bold"), cmd("italic", "I", "Italic"), linkBtn)
+    ),
+    editor
+  );
 }
 
 /**
