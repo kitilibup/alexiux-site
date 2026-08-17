@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "eleventy && node tools/apply-path-prefix.mjs _site \"$PATH_PREFIX\"",
+    "build": "eleventy && node tools/apply-path-prefix.mjs _site \"$PATH_PREFIX\" && node tools/stamp-admin.mjs _site",
     "serve": "eleventy --serve --port=8080",
     "mirror": "python3 tools/mirror.py && python3 tools/postprocess.py",
     "verify": "python3 tools/verify.py"

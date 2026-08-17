@@ -700,6 +700,9 @@ function richTextPanel(draft, fieldName, markDirty) {
 
   // srcdoc rather than document.write: it keeps the frame same-origin while
   // letting the site's stylesheets load by relative path.
+  // The page's own <style> blocks live in its <head>; without them the editor
+  // is missing rules the real page has, such as figcaption spacing.
+  const pageStyles = (String(draft.head || "").match(/<style>[\s\S]*?<\/style>/gi) || []).join("");
   const body = toEditorHtml(getField(draft, fieldName) || "");
   frame.srcdoc =
     "<!doctype html><html><head><meta charset='utf-8'>" +
@@ -709,7 +712,7 @@ function richTextPanel(draft, fieldName, markDirty) {
     "#cms-root img{cursor:pointer}" +
     "#cms-root img:hover{outline:2px solid #2b2bff;outline-offset:2px}" +
     "#cms-root img.cms-selected{outline:2px solid #2b2bff;outline-offset:2px}" +
-    "</style></head><body><div class='page-wrapper'><div id='cms-root'>" +
+    "</style>" + pageStyles + "</head><body><div class='page-wrapper'><div id='cms-root'>" +
     body +
     "</div></div></body></html>";
 
