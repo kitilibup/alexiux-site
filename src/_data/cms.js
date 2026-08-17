@@ -17,10 +17,38 @@ const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ESCAPES[c]);
  */
 function renderHead(record) {
   const seo = record.seo || {};
-  return (record.head || "").replace(
+  let head = (record.head || "").replace(
     /\{\{\s*seo\.(\w+)\s*\}\}/g,
     (_, key) => escapeHtml(seo[key] ?? "")
   );
+
+  // Most pages were published without a description or any og/twitter tags, so
+  // there was nothing for the CMS value to substitute into - the field saved
+  // but never reached the page. Tags are upserted rather than only filled.
+  const upsertMeta = (attr, name, value) => {
+    if (!value) return;
+    const existing = new RegExp(`<meta[^>]*${attr}="${name}"[^>]*/?>`, "i");
+    const tag = `<meta content="${escapeHtml(value)}" ${attr}="${name}"/>`;
+    head = existing.test(head) ? head.replace(existing, tag) : head + tag;
+  };
+
+  if (seo.title && !/<title>/i.test(head)) {
+    head += `<title>${escapeHtml(seo.title)}</title>`;
+  }
+
+  const shareTitle = seo.ogTitle || seo.title;
+  const shareDesc = seo.ogDescription || seo.description;
+
+  upsertMeta("name", "description", seo.description);
+  upsertMeta("property", "og:title", shareTitle);
+  upsertMeta("property", "og:description", shareDesc);
+  upsertMeta("property", "og:image", seo.ogImage);
+  upsertMeta("name", "twitter:title", shareTitle);
+  upsertMeta("name", "twitter:description", shareDesc);
+  upsertMeta("name", "twitter:image", seo.ogImage);
+  if (seo.ogImage || shareDesc) upsertMeta("name", "twitter:card", "summary_large_image");
+
+  return head;
 }
 
 const navbarCache = new Map();

@@ -541,6 +541,22 @@ function blockLabel(block) {
  * non-editable, so text and images can be changed but the grid and the
  * animations bound to it can't be dismantled.
  */
+/*
+ * Content stores root-absolute paths (/assets/img/...). On a project-pages
+ * deploy the site lives under /<repo>/, so inside the editor those resolve to
+ * the domain root and every image 404s. They are rebased for display and
+ * un-rebased on save, so what is stored never changes.
+ */
+const SITE_BASE = location.pathname.replace(/\/admin\/?$/, "");
+
+const toEditorHtml = (html) =>
+  SITE_BASE ? String(html).replace(/(src|href)="\/assets\//g, `$1="${SITE_BASE}/assets/`) : String(html);
+
+const fromEditorHtml = (html) =>
+  SITE_BASE
+    ? String(html).replace(new RegExp(`(src|href)="${SITE_BASE}/assets/`, "g"), '$1="/assets/')
+    : String(html);
+
 function richTextPanel(draft, fieldName, markDirty) {
   const frame = el("iframe", { className: "rt-frame", title: "Page content" });
   const status = el("span", { className: "rt-status" });
@@ -568,11 +584,26 @@ function richTextPanel(draft, fieldName, markDirty) {
     status
   );
 
+  // Settings for the selected image, alongside the canvas.
+  const panelPreview = el("img", { className: "ip-preview", alt: "" });
+  const panelName = el("code", { className: "src-label" });
+  const panelAlt = el("input", { type: "text", placeholder: "Describe this image…" });
+  const panelReplace = el("button", { className: "btn small" }, "Replace image");
+  const imagePanel = el("div", { className: "image-panel", hidden: true },
+    el("div", { className: "ip-head" }, "Image"),
+    panelPreview,
+    panelName,
+    el("label", { className: "alt-label" }, "Alt text"),
+    panelAlt,
+    el("p", { className: "hint" }, "Describes the image for screen readers and search engines."),
+    panelReplace
+  );
+
   let root = null;
 
   const commit = () => {
     if (!root) return;
-    const html = root.innerHTML;
+    const html = fromEditorHtml(root.innerHTML);
     if (html === getField(draft, fieldName)) return;
     setField(draft, fieldName, html);
     markDirty();
@@ -610,23 +641,49 @@ function richTextPanel(draft, fieldName, markDirty) {
       doc.execCommand("insertText", false, text);
     });
 
-    // Click an image to swap it, in place.
-    root.addEventListener("click", async (e) => {
+    // Selecting an image opens its settings, the way Webflow does.
+    root.addEventListener("click", (e) => {
       const img = e.target.closest?.("img");
-      if (!img) return;
-      e.preventDefault();
-      const picked = await pickImage();
-      if (!picked) return;
-      img.setAttribute("src", picked);
-      img.removeAttribute("srcset");
-      img.removeAttribute("sizes");
-      if (!img.getAttribute("alt")) {
-        const alt = prompt("Alt text for this image (describes it for screen readers):", "");
-        if (alt) img.setAttribute("alt", alt);
+      for (const prev of root.querySelectorAll("img.cms-selected")) {
+        prev.classList.remove("cms-selected");
       }
-      commit();
-      fit();
+      if (!img) return hideImagePanel();
+      e.preventDefault();
+      img.classList.add("cms-selected");
+      showImagePanel(img);
     });
+
+    function hideImagePanel() {
+      imagePanel.hidden = true;
+    }
+
+    function showImagePanel(img) {
+      imagePanel.hidden = false;
+      const src = img.getAttribute("src") || "";
+      panelPreview.src = src;
+      panelName.textContent = src.split("/").pop() || src;
+      panelAlt.value = img.getAttribute("alt") || "";
+      panelAlt.className = panelAlt.value ? "" : "needs-alt";
+
+      panelAlt.oninput = () => {
+        img.setAttribute("alt", panelAlt.value);
+        panelAlt.className = panelAlt.value ? "" : "needs-alt";
+        commit();
+      };
+
+      panelReplace.onclick = async () => {
+        const picked = await pickImage();
+        if (!picked) return;
+        // Rebase for display; commit() converts it back on the way out.
+        img.setAttribute("src", toEditorHtml(`src="${picked}"`).slice(5, -1));
+        img.removeAttribute("srcset");
+        img.removeAttribute("sizes");
+        panelPreview.src = img.getAttribute("src");
+        panelName.textContent = picked.split("/").pop();
+        commit();
+        fit();
+      };
+    }
 
     fit();
     setTimeout(fit, 600);
@@ -643,7 +700,7 @@ function richTextPanel(draft, fieldName, markDirty) {
 
   // srcdoc rather than document.write: it keeps the frame same-origin while
   // letting the site's stylesheets load by relative path.
-  const body = getField(draft, fieldName) || "";
+  const body = toEditorHtml(getField(draft, fieldName) || "");
   frame.srcdoc =
     "<!doctype html><html><head><meta charset='utf-8'>" +
     (CONFIG.siteCss || []).map((h) => `<link rel="stylesheet" href="${h}">`).join("") +
@@ -651,11 +708,13 @@ function richTextPanel(draft, fieldName, markDirty) {
     "#cms-root{outline:none}" +
     "#cms-root img{cursor:pointer}" +
     "#cms-root img:hover{outline:2px solid #2b2bff;outline-offset:2px}" +
+    "#cms-root img.cms-selected{outline:2px solid #2b2bff;outline-offset:2px}" +
     "</style></head><body><div class='page-wrapper'><div id='cms-root'>" +
     body +
     "</div></div></body></html>";
 
-  return el("div", { className: "rt-wrap" }, toolbar, frame);
+  return el("div", { className: "rt-wrap" }, toolbar,
+    el("div", { className: "rt-body" }, frame, imagePanel));
 }
 
 /** One image, inline in the document flow: preview, replace, alt text. */
