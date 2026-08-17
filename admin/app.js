@@ -589,14 +589,20 @@ function richTextPanel(draft, fieldName, markDirty) {
   const panelName = el("code", { className: "src-label" });
   const panelAlt = el("input", { type: "text", placeholder: "Describe this image…" });
   const panelReplace = el("button", { className: "btn small" }, "Replace image");
-  const imagePanel = el("div", { className: "image-panel", hidden: true },
-    el("div", { className: "ip-head" }, "Image"),
+  const panelEmpty = el("p", { className: "hint ip-empty" },
+    "Select an image in the page to replace it or edit its alt text.");
+  const panelFields = el("div", { className: "ip-fields", hidden: true },
     panelPreview,
     panelName,
     el("label", { className: "alt-label" }, "Alt text"),
     panelAlt,
     el("p", { className: "hint" }, "Describes the image for screen readers and search engines."),
     panelReplace
+  );
+  const imagePanel = el("div", { className: "image-panel" },
+    el("div", { className: "ip-head" }, "Image"),
+    panelEmpty,
+    panelFields
   );
 
   let root = null;
@@ -654,11 +660,13 @@ function richTextPanel(draft, fieldName, markDirty) {
     });
 
     function hideImagePanel() {
-      imagePanel.hidden = true;
+      panelFields.hidden = true;
+      panelEmpty.hidden = false;
     }
 
     function showImagePanel(img) {
-      imagePanel.hidden = false;
+      panelFields.hidden = false;
+      panelEmpty.hidden = true;
       const src = img.getAttribute("src") || "";
       panelPreview.src = src;
       panelName.textContent = src.split("/").pop() || src;
@@ -710,7 +718,8 @@ function richTextPanel(draft, fieldName, markDirty) {
     "<style>html,body{margin:0;background:#fff}" +
     "#cms-root{outline:none}" +
     "#cms-root img{cursor:pointer}" +
-    "#cms-root img:hover{outline:2px solid #2b2bff;outline-offset:2px}" +
+    "#cms-root img:hover{outline:2px solid #2b2bff;outline-offset:2px;" +
+    "box-shadow:0 0 0 9999px rgba(43,43,255,.04)}" +
     "#cms-root img.cms-selected{outline:2px solid #2b2bff;outline-offset:2px}" +
     "</style>" + pageStyles + "</head><body><div class='page-wrapper'><div id='cms-root'>" +
     body +

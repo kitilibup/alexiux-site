@@ -392,3 +392,6 @@ input.needs-alt { border-color: #d9a441; background: rgba(217, 164, 65, 0.07); }
   .rt-body { flex-direction: column; }
   .image-panel { flex: none; width: 100%; border-left: 0; border-top: 1px solid var(--line); }
 }
+
+.ip-empty { margin: 0; }
+.image-panel .ip-fields[hidden] { display: none; }

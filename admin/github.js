@@ -36,11 +36,22 @@ export class GitHub {
 
     if (res.status === 401) throw new Error("Sign-in expired or token invalid.");
     if (res.status === 403) {
-      const remaining = res.headers.get("x-ratelimit-remaining");
+      if (res.headers.get("x-ratelimit-remaining") === "0") {
+        throw new Error("GitHub rate limit reached. Try again in a few minutes.");
+      }
+      // GitHub's own message distinguishes the causes that all surface as 403 -
+      // token not granted to this repo, expired, awaiting org approval, or
+      // missing the Contents permission - so pass it through rather than guess.
+      let detail = "";
+      try {
+        detail = (await res.json()).message || "";
+      } catch {
+        /* not JSON */
+      }
       throw new Error(
-        remaining === "0"
-          ? "GitHub rate limit reached. Try again in a few minutes."
-          : "Access denied. The token needs Contents: read and write on this repo."
+        `Access denied by GitHub${detail ? `: ${detail}` : ""}. ` +
+        "Check the token grants this repository under Repository access, " +
+        "and sets Repository permissions -> Contents to Read and write."
       );
     }
     if (res.status === 404) {
