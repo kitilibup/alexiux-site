@@ -1,0 +1,12 @@
+node_modules/
+_site/
+.DS_Store
+*.log
+
+# Screenshot output from tools/visual-diff.sh
+visual-diff/
+
+# Pristine download from tools/mirror.py. Regenerate with the script rather
+# than committing a second copy of every page; mirror/dist/ is the one that
+# matters and is tracked.
+mirror/raw/
