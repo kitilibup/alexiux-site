@@ -318,3 +318,36 @@ input.needs-alt { border-color: #d9a441; background: rgba(217, 164, 65, 0.07); }
 @media (prefers-color-scheme: dark) { .seo-title { color: #8ab4f8; } }
 .seo-desc { font-size: 13px; line-height: 1.5; margin-top: 3px; }
 .modal header .actions { display: flex; align-items: center; gap: 12px; }
+
+/* ------------------------------------------------------ rich text ---- */
+
+.rt-panel { display: flex; flex-direction: column; gap: 10px; }
+.rt-block {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--bg); overflow: hidden;
+}
+.rt-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px; border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.rt-tag {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.rt-tools { display: flex; gap: 4px; }
+.rt-btn {
+  border: 1px solid transparent; background: none; color: var(--muted);
+  border-radius: 4px; min-width: 26px; height: 24px; padding: 0 7px;
+  font-size: 12px; cursor: pointer; line-height: 1;
+}
+.rt-btn:hover { background: rgba(128, 128, 128, 0.14); color: var(--ink); }
+.rt-editable {
+  padding: 11px 13px; min-height: 42px; font-size: 15px; line-height: 1.55;
+  outline: none;
+}
+.rt-editable:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+.rt-editable a { color: var(--accent); }
+/* Webflow copy often relies on the site's own type scale; keep the editor
+   neutral so nothing here is mistaken for the rendered result. */
+.rt-editable * { font-size: inherit !important; font-family: inherit !important; }

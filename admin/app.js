@@ -352,6 +352,113 @@ function editorView(collection, slug) {
   );
 }
 
+/* -------------------------------------------------------- rich text ---
+ * Editing text inside verbatim Webflow markup.
+ *
+ * The body is generated markup whose structure carries the layout (grid
+ * classes) and the animations (data-w-id). Feeding the whole thing through a
+ * DOM parser and re-serialising would silently renormalise it - attribute
+ * order, self-closing tags, entities - so the approach here is the same as
+ * the image manager: locate each text block's exact offsets in the original
+ * string, and replace only the bytes inside it.
+ *
+ * That also means you can edit copy without ever being able to break the
+ * layout, which mirrors how Webflow's Editor works.
+ */
+
+// Tags that make an element a structural container rather than a text block.
+const BLOCK_CHILD_RE = /<(div|section|figure|ul|ol|img|table|form|script|iframe|svg|video)\b/i;
+const TEXT_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "figcaption", "blockquote", "div"];
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input",
+  "link", "meta", "param", "source", "track", "wbr"]);
+
+/** Index just past the close of the element whose opening tag starts at `start`. */
+function matchElementEnd(html, start, name) {
+  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)([^>]*?)(\/?)>/g;
+  tagRe.lastIndex = start;
+  let depth = 0;
+  let m;
+  while ((m = tagRe.exec(html))) {
+    const tag = m[2].toLowerCase();
+    if (tag === "script" && !m[1]) {
+      const close = html.indexOf("</script>", tagRe.lastIndex);
+      if (close === -1) break;
+      tagRe.lastIndex = close + 9;
+      continue;
+    }
+    if (tag !== name || VOID_TAGS.has(tag) || m[4]) continue;
+    if (m[1]) {
+      if (--depth === 0) return { end: tagRe.lastIndex, innerEnd: m.index };
+    } else {
+      depth += 1;
+    }
+  }
+  return null;
+}
+
+/** Every leaf text element, in document order, with exact string offsets. */
+function findTextBlocks(html) {
+  const source = String(html || "");
+  const openRe = /<([a-zA-Z][a-zA-Z0-9-]*)\b([^>]*)>/g;
+  const blocks = [];
+  let m;
+  while ((m = openRe.exec(source))) {
+    const tag = m[1].toLowerCase();
+    if (!TEXT_TAGS.includes(tag) || m[2].endsWith("/")) continue;
+
+    const found = matchElementEnd(source, m.index, tag);
+    if (!found) continue;
+
+    const innerStart = m.index + m[0].length;
+    const inner = source.slice(innerStart, found.innerEnd);
+
+    // Structural elements are skipped; their text lives in their children.
+    if (BLOCK_CHILD_RE.test(inner)) continue;
+    if (!inner.replace(/<[^>]+>/g, "").trim()) continue;
+
+    const cls = (m[2].match(/class="([^"]*)"/) || [, ""])[1];
+    blocks.push({ tag, cls, inner, innerStart, innerEnd: found.innerEnd });
+  }
+  return blocks;
+}
+
+/** Replace one block's inner HTML, leaving every other byte untouched. */
+function replaceTextBlock(html, block, newInner) {
+  return html.slice(0, block.innerStart) + newInner + html.slice(block.innerEnd);
+}
+
+/**
+ * Keep only inline formatting. Anything pasted from Word or another site
+ * arrives with fonts, colours and spans that would fight the site's styles.
+ */
+function sanitizeInline(html) {
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  const root = doc.body.firstChild;
+  const ALLOWED = { B: 1, STRONG: 1, I: 1, EM: 1, A: 1, BR: 1, U: 1 };
+
+  (function walk(node) {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === 3) continue;
+      if (child.nodeType !== 1) { child.remove(); continue; }
+      walk(child);
+      if (!ALLOWED[child.tagName]) {
+        child.replaceWith(...child.childNodes);
+        continue;
+      }
+      for (const attr of [...child.attributes]) {
+        const keep = child.tagName === "A" && attr.name === "href";
+        if (!keep) child.removeAttribute(attr.name);
+      }
+      if (child.tagName === "A") {
+        child.setAttribute("target", "_blank");
+        child.setAttribute("rel", "noopener");
+      }
+    }
+  })(root);
+
+  return root.innerHTML;
+}
+
 /** Recommended lengths before search engines start truncating. */
 const SEO_LIMITS = { "seo.title": 60, "seo.description": 160 };
 
@@ -380,6 +487,108 @@ function seoPreview(draft) {
 
 const refreshSeoPreview = () =>
   document.querySelector(".seo-preview")?.dispatchEvent(new CustomEvent("seo:refresh"));
+
+/** Human label for a block, so you can tell which bit of the page it is. */
+function blockLabel(block) {
+  if (/^h[1-6]$/.test(block.tag)) return block.tag.toUpperCase();
+  const cls = (block.cls || "").split(/\s+/)[0] || "";
+  if (/heading/i.test(cls)) return "Heading";
+  if (/description|paragraph|rich/i.test(cls)) return "Paragraph";
+  if (cls) return cls.replace(/-/g, " ");
+  return block.tag === "p" ? "Paragraph" : "Text";
+}
+
+/**
+ * WYSIWYG editing for the page copy.
+ *
+ * Each text block is its own contenteditable, so the surrounding structure -
+ * and the animations bound to it - can't be disturbed.
+ */
+function richTextPanel(draft, fieldName, markDirty) {
+  const wrap = el("div", { className: "rt-panel" });
+
+  const rebuild = () => {
+    const html = getField(draft, fieldName);
+    const blocks = findTextBlocks(html);
+
+    if (!blocks.length) {
+      wrap.replaceChildren(el("p", { className: "hint" }, "No editable text found in this page."));
+      return;
+    }
+
+    wrap.replaceChildren(
+      el("p", { className: "hint" },
+        `${blocks.length} text block${blocks.length === 1 ? "" : "s"}. ` +
+        "Edit directly; the page layout and animations are left untouched."),
+      ...blocks.map((block, i) => {
+        const editor = el("div", { className: "rt-editable" });
+        editor.contentEditable = "true";
+        editor.innerHTML = block.inner;
+        editor.spellcheck = true;
+
+        // Blocks are located by offset, so committing on blur avoids
+        // recomputing positions on every keystroke.
+        const commit = () => {
+          const cleaned = sanitizeInline(editor.innerHTML);
+          if (cleaned === block.inner) return;
+          const current = getField(draft, fieldName);
+          const fresh = findTextBlocks(current)[i];
+          if (!fresh) return;
+          setField(draft, fieldName, replaceTextBlock(current, fresh, cleaned));
+          block.inner = cleaned;
+          markDirty();
+        };
+        editor.addEventListener("blur", commit);
+
+        // Paste as plain text: pasted markup would drag foreign styling in.
+        editor.addEventListener("paste", (e) => {
+          e.preventDefault();
+          const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+          document.execCommand("insertText", false, text);
+        });
+
+        // Enter inserts a line break rather than a new block, which would
+        // change the document structure.
+        editor.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            document.execCommand("insertLineBreak");
+          }
+        });
+
+        const cmd = (name, label, title) =>
+          el("button", {
+            className: "rt-btn", title,
+            // Keep focus in the editable so the command applies to the selection.
+            onmousedown: (e) => { e.preventDefault(); document.execCommand(name); commit(); },
+          }, label);
+
+        const linkBtn = el("button", {
+          className: "rt-btn", title: "Add or edit a link",
+          onmousedown: (e) => {
+            e.preventDefault();
+            const url = prompt("Link URL (leave empty to remove the link):", "");
+            if (url === null) return;
+            document.execCommand(url ? "createLink" : "unlink", false, url || undefined);
+            commit();
+          },
+        }, "Link");
+
+        return el("div", { className: "rt-block" },
+          el("div", { className: "rt-head" },
+            el("span", { className: "rt-tag" }, blockLabel(block)),
+            el("div", { className: "rt-tools" },
+              cmd("bold", "B", "Bold"), cmd("italic", "I", "Italic"), linkBtn)
+          ),
+          editor
+        );
+      })
+    );
+  };
+
+  rebuild();
+  return wrap;
+}
 
 /**
  * Every image in the page body, with a preview, a replace button and an alt
@@ -524,6 +733,10 @@ function fieldControl(field, draft, markDirty) {
 
     case "images":
       input = bodyImagesPanel(draft, field.name, markDirty);
+      break;
+
+    case "richtext":
+      input = richTextPanel(draft, field.name, markDirty);
       break;
 
     default:

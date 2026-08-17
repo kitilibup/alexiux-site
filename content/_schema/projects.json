@@ -47,6 +47,13 @@
     },
     {
       "name": "bodyHtml",
+      "label": "Page text",
+      "type": "richtext",
+      "group": "Content",
+      "help": "Edit the copy directly. Bold, italic and links are available; the layout and animations are left untouched."
+    },
+    {
+      "name": "bodyHtml",
       "label": "Images in this case study",
       "type": "images",
       "group": "Images",
@@ -86,10 +93,10 @@
     },
     {
       "name": "bodyHtml",
-      "label": "Page body",
+      "label": "Raw HTML (advanced)",
       "type": "html",
-      "group": "Content",
-      "help": "The case study itself. Edit text directly; use the media library to swap images."
+      "group": "Advanced",
+      "help": "The underlying markup. Editing here can break the layout."
     }
   ]
 }
