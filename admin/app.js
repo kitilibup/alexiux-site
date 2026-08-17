@@ -277,6 +277,10 @@ function listView(collection) {
       el("td", {}, r.draft ? el("span", { className: "badge" }, "Draft") : ""),
       el("td", { className: "row-actions" },
         schema.fixed ? null : el("button", {
+          className: "link",
+          onclick: () => duplicateRecord(collection, r),
+        }, "Duplicate"),
+        schema.fixed ? null : el("button", {
           className: "link danger",
           onclick: () => removeRecord(collection, r),
         }, "Delete")
@@ -1199,20 +1203,97 @@ async function saveRecord(collection, original, draft, button, status) {
   }
 }
 
+/**
+ * Ask for a name and a template.
+ *
+ * A page cannot be built from nothing: head, wrapper, footer and scripts are
+ * structural, and the body is Webflow markup whose layout lives in generated
+ * classes. So a new page always starts from an existing one - the choice is
+ * which, rather than whether.
+ */
+function chooseTemplate(collection) {
+  const schema = state.schemas[collection];
+  const items = state.items[collection];
+
+  return new Promise((resolve) => {
+    let picked = items[0] || null;
+
+    const nameInput = el("input", {
+      type: "text",
+      placeholder: `${schema.singular} name`,
+      id: "new-name",
+    });
+
+    const grid = el("div", { className: "media-grid tpl-grid" });
+    const paint = () => {
+      grid.replaceChildren(
+        ...items.map((r) =>
+          el("button", {
+            className: "media-item pick tpl" + (picked === r ? " selected" : ""),
+            onclick: () => { picked = r; paint(); },
+          },
+            r.thumbnail
+              ? el("img", { src: "../" + r.thumbnail.replace(/^\//, ""), alt: "", loading: "lazy" })
+              : el("div", { className: "tpl-noimg" }, "No image"),
+            el("figcaption", {}, r.title || r.slug),
+            el("span", { className: "tpl-meta" },
+              `${parseBodyImages(r.bodyHtml).length} images`)
+          )
+        )
+      );
+    };
+    paint();
+
+    const close = (value) => { overlay.remove(); resolve(value); };
+
+    const create = el("button", { className: "btn primary" }, `Create ${schema.singular.toLowerCase()}`);
+    create.onclick = () => {
+      const title = nameInput.value.trim();
+      if (!title) return toast("Give it a name first.", "error");
+      if (!picked) return toast("Pick a template first.", "error");
+      const slug = slugify(title);
+      if (!slug) return toast("That name doesn't produce a usable slug.", "error");
+      if (items.some((r) => r.slug === slug)) {
+        return toast(`"${slug}" already exists.`, "error");
+      }
+      close({ title, slug, template: picked });
+    };
+
+    const overlay = el("div", { className: "overlay" },
+      el("div", { className: "modal" },
+        el("header", {},
+          el("h2", {}, `New ${schema.singular.toLowerCase()}`),
+          el("button", { className: "link", onclick: () => close(null) }, "Close")
+        ),
+        el("div", { className: "field" },
+          el("label", { htmlFor: "new-name" }, "Name"),
+          nameInput
+        ),
+        el("div", { className: "field" },
+          el("label", {}, "Start from"),
+          el("p", { className: "hint" },
+            "The new page copies this one's layout and content, which you then edit. " +
+            "Pick whichever is closest to what you want to build."),
+          grid
+        ),
+        el("div", { className: "modal-actions" }, create)
+      )
+    );
+
+    document.body.append(overlay);
+    nameInput.focus();
+  });
+}
+
 async function newRecord(collection) {
   const schema = state.schemas[collection];
-  const title = prompt(`Name of the new ${schema.singular.toLowerCase()}?`);
-  if (!title) return;
-  const slug = slugify(title);
-  if (!slug) return toast("That name doesn't produce a usable slug.", "error");
-  if (state.items[collection].some((r) => r.slug === slug)) {
-    return toast(`"${slug}" already exists.`, "error");
+  if (!state.items[collection].length) {
+    return toast("Need at least one existing entry to use as a template.", "error");
   }
 
-  // Clone the chrome from an existing entry: head, wrapper and scripts are
-  // structural, and a new page can't render without them.
-  const template = state.items[collection][0];
-  if (!template) return toast("Need at least one existing entry to copy the layout from.", "error");
+  const chosen = await chooseTemplate(collection);
+  if (!chosen) return;
+  const { title, slug, template } = chosen;
 
   const record = {
     slug,
@@ -1241,6 +1322,37 @@ async function newRecord(collection) {
     state.items[collection].push(record);
     sortRecords(state.items[collection], schema);
     toast(`Created "${title}" as a draft. Edit it, then untick Draft to publish.`);
+    go({ name: collection, slug });
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+/** Copy an entry, using it as its own template. */
+async function duplicateRecord(collection, source) {
+  const schema = state.schemas[collection];
+  const base = `${source.title || source.slug} copy`;
+  let slug = slugify(base);
+  let n = 2;
+  while (state.items[collection].some((r) => r.slug === slug)) slug = `${slugify(base)}-${n++}`;
+
+  const record = JSON.parse(JSON.stringify(source));
+  delete record.__path;
+  Object.assign(record, {
+    slug,
+    title: base,
+    draft: true,
+    order: Math.max(0, ...state.items[collection].map((r) => r.order ?? 0)) + 1,
+  });
+
+  try {
+    const path = `${schema.folder}/${slug}.json`;
+    await state.gh.writeFile(path, JSON.stringify(record, null, 2) + "\n",
+      `CMS: duplicate ${collection}/${source.slug}`);
+    record.__path = path;
+    state.items[collection].push(record);
+    sortRecords(state.items[collection], schema);
+    toast(`Duplicated as a draft: "${base}".`);
     go({ name: collection, slug });
   } catch (err) {
     toast(err.message, "error");
