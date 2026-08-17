@@ -351,3 +351,20 @@ input.needs-alt { border-color: #d9a441; background: rgba(217, 164, 65, 0.07); }
 /* Webflow copy often relies on the site's own type scale; keep the editor
    neutral so nothing here is mistaken for the rendered result. */
 .rt-editable * { font-size: inherit !important; font-family: inherit !important; }
+
+/* ------------------------------------------- WYSIWYG content editor --- */
+
+.rt-wrap { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.rt-toolbar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; background: var(--panel); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 2;
+}
+.rt-toolbar .hint { margin: 0; font-size: 12px; }
+.rt-sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+.rt-btn.ital { font-style: italic; }
+.rt-status { margin-left: auto; font-size: 12px; color: var(--warn); }
+.rt-frame {
+  display: block; width: 100%; border: 0; background: #fff;
+  min-height: 420px;
+}

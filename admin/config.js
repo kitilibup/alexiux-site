@@ -18,6 +18,12 @@ export const CONFIG = {
   // Where uploads land. Referenced from content as /assets/uploads/<file>.
   uploadPath: "assets/uploads",
 
+  // Loaded into the content editor so it renders with the real site styles.
+  siteCss: [
+    "../assets/css/fonts.css",
+    "../assets/css/alexei-portfolio-site.webflow.shared.8e6b5cb7d.css",
+  ],
+
   collections: ["projects", "pages"],
 
   // Shown as the "view site" link once a publish lands.

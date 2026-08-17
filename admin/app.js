@@ -529,33 +529,121 @@ function blockLabel(block) {
  * Each text block is its own contenteditable, so the surrounding structure -
  * and the animations bound to it - can't be disturbed.
  */
+/**
+ * One WYSIWYG surface for the whole page body.
+ *
+ * The body is rendered inside an iframe carrying the site's own stylesheets,
+ * so you edit the page as it actually looks rather than a list of fields. An
+ * iframe rather than an inline div because the site's CSS is 168KB of global
+ * rules that would otherwise style the CMS itself.
+ *
+ * Structure is still protected: the layout containers are marked
+ * non-editable, so text and images can be changed but the grid and the
+ * animations bound to it can't be dismantled.
+ */
 function richTextPanel(draft, fieldName, markDirty) {
-  const wrap = el("div", { className: "rt-panel" });
+  const frame = el("iframe", { className: "rt-frame", title: "Page content" });
+  const status = el("span", { className: "rt-status" });
 
-  const rebuild = () => {
-    const html = getField(draft, fieldName);
-    const blocks = findBodyBlocks(html);
-
-    if (!blocks.length) {
-      wrap.replaceChildren(el("p", { className: "hint" }, "Nothing editable found in this page."));
-      return;
-    }
-
-    const texts = blocks.filter((b) => b.kind === "text").length;
-    const images = blocks.length - texts;
-
-    wrap.replaceChildren(
-      el("p", { className: "hint" },
-        `${texts} text block${texts === 1 ? "" : "s"} and ${images} image${images === 1 ? "" : "s"}, ` +
-        "in the order they appear on the page. The layout and animations are left untouched."),
-      ...blocks.map((block) => (block.kind === "image"
-        ? imageBlockRow(block, draft, fieldName, markDirty, rebuild)
-        : textBlockRow(block, draft, fieldName, markDirty)))
-    );
+  const exec = (cmd, value) => {
+    frame.contentDocument?.execCommand(cmd, false, value);
+    frame.contentWindow?.focus();
+    commit();
   };
 
-  rebuild();
-  return wrap;
+  const toolbar = el("div", { className: "rt-toolbar" },
+    el("button", { className: "rt-btn", title: "Bold",
+      onmousedown: (e) => { e.preventDefault(); exec("bold"); } }, "B"),
+    el("button", { className: "rt-btn ital", title: "Italic",
+      onmousedown: (e) => { e.preventDefault(); exec("italic"); } }, "I"),
+    el("button", { className: "rt-btn", title: "Add or remove a link",
+      onmousedown: (e) => {
+        e.preventDefault();
+        const url = prompt("Link URL (leave empty to remove):", "");
+        if (url === null) return;
+        exec(url ? "createLink" : "unlink", url || undefined);
+      } }, "Link"),
+    el("span", { className: "rt-sep" }),
+    el("span", { className: "hint" }, "Click any image to replace it"),
+    status
+  );
+
+  let root = null;
+
+  const commit = () => {
+    if (!root) return;
+    const html = root.innerHTML;
+    if (html === getField(draft, fieldName)) return;
+    setField(draft, fieldName, html);
+    markDirty();
+    status.textContent = "edited";
+  };
+
+  const fit = () => {
+    const doc = frame.contentDocument;
+    if (doc?.body) frame.style.height = doc.body.scrollHeight + 40 + "px";
+  };
+
+  frame.addEventListener("load", () => {
+    const doc = frame.contentDocument;
+    root = doc.getElementById("cms-root");
+    if (!root) return;
+
+    root.contentEditable = "true";
+    doc.designMode = "off";
+
+    // Keep the page's own structure intact: only text and images are editable.
+    for (const node of root.querySelectorAll("script,iframe,video,svg")) {
+      node.setAttribute("contenteditable", "false");
+    }
+
+    root.addEventListener("input", () => { commit(); fit(); });
+    root.addEventListener("blur", commit, true);
+
+    // Pasting keeps text only, so foreign markup and styling never arrive.
+    root.addEventListener("paste", (e) => {
+      e.preventDefault();
+      const text = (e.clipboardData || frame.contentWindow.clipboardData).getData("text/plain");
+      doc.execCommand("insertText", false, text);
+    });
+
+    // Click an image to swap it, in place.
+    root.addEventListener("click", async (e) => {
+      const img = e.target.closest?.("img");
+      if (!img) return;
+      e.preventDefault();
+      const picked = await pickImage();
+      if (!picked) return;
+      img.setAttribute("src", picked);
+      img.removeAttribute("srcset");
+      img.removeAttribute("sizes");
+      if (!img.getAttribute("alt")) {
+        const alt = prompt("Alt text for this image (describes it for screen readers):", "");
+        if (alt) img.setAttribute("alt", alt);
+      }
+      commit();
+      fit();
+    });
+
+    fit();
+    setTimeout(fit, 600);
+  });
+
+  // srcdoc rather than document.write: it keeps the frame same-origin while
+  // letting the site's stylesheets load by relative path.
+  const body = getField(draft, fieldName) || "";
+  frame.srcdoc =
+    "<!doctype html><html><head><meta charset='utf-8'>" +
+    (CONFIG.siteCss || []).map((h) => `<link rel="stylesheet" href="${h}">`).join("") +
+    "<style>html,body{margin:0;background:#fff}" +
+    "#cms-root{outline:none}" +
+    "#cms-root img{cursor:pointer}" +
+    "#cms-root img:hover{outline:2px solid #2b2bff;outline-offset:2px}" +
+    "</style></head><body><div class='page-wrapper'><div id='cms-root'>" +
+    body +
+    "</div></div></body></html>";
+
+  return el("div", { className: "rt-wrap" }, toolbar, frame);
 }
 
 /** One image, inline in the document flow: preview, replace, alt text. */

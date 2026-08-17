@@ -12,7 +12,7 @@
       "label": "Page content",
       "type": "richtext",
       "group": "Content",
-      "help": "Text and images in page order. Edit copy directly, replace images and give them alt text. The layout and animations are left untouched."
+      "help": "Edit the page directly. Click any image to replace it. Text and images are editable; the page layout is not."
     },
     {
       "name": "seo.title",
