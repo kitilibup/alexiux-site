@@ -1,0 +1,648 @@
+import { CONFIG } from "./config.js";
+import { GitHub, bytesToBase64 } from "./github.js";
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, props = {}, ...kids) => {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const k of kids.flat()) {
+    if (k != null) node.append(k.nodeType ? k : document.createTextNode(k));
+  }
+  return node;
+};
+
+const state = {
+  gh: null,
+  user: null,
+  schemas: {},
+  items: {},        // collection -> [record]
+  view: { name: "projects" },
+  dirty: false,     // unsaved edits in the open editor
+  media: null,      // cached upload listing
+};
+
+/* ---------------------------------------------------------------- values */
+
+const getField = (obj, path) =>
+  path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+
+function setField(obj, path, value) {
+  const keys = path.split(".");
+  const last = keys.pop();
+  let cur = obj;
+  for (const k of keys) {
+    if (typeof cur[k] !== "object" || cur[k] === null) cur[k] = {};
+    cur = cur[k];
+  }
+  if (value === "" || value == null) delete cur[last];
+  else cur[last] = value;
+}
+
+const slugify = (s) =>
+  s.toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+/* ------------------------------------------------------------------ auth */
+
+function saveToken(token) {
+  sessionStorage.setItem("alexiux_cms_token", token);
+}
+const loadToken = () => sessionStorage.getItem("alexiux_cms_token");
+function clearToken() {
+  sessionStorage.removeItem("alexiux_cms_token");
+}
+
+/**
+ * OAuth via the Worker. The popup posts the token back to this window; the
+ * client secret never reaches the browser.
+ */
+function signInWithGitHub() {
+  const w = window.open(
+    `${CONFIG.authWorker}/auth`,
+    "github-oauth",
+    "width=720,height=760"
+  );
+  if (!w) {
+    toast("Popup blocked. Allow popups for this site and try again.", "error");
+    return;
+  }
+  const onMessage = async (event) => {
+    if (new URL(CONFIG.authWorker).origin !== event.origin) return;
+    if (!event.data?.token) return;
+    window.removeEventListener("message", onMessage);
+    saveToken(event.data.token);
+    await start();
+  };
+  window.addEventListener("message", onMessage);
+}
+
+async function start() {
+  const token = loadToken();
+  if (!token) return renderLogin();
+
+  state.gh = new GitHub({ ...CONFIG, token });
+  try {
+    state.user = await state.gh.user();
+    await state.gh.checkAccess();
+  } catch (err) {
+    clearToken();
+    return renderLogin(err.message);
+  }
+  await loadAll();
+  render();
+}
+
+/* ------------------------------------------------------------------ data */
+
+async function loadAll() {
+  for (const name of CONFIG.collections) {
+    state.schemas[name] = await state.gh.readJson(`content/_schema/${name}.json`);
+    const files = (await state.gh.listDir(state.schemas[name].folder)).filter((f) =>
+      f.name.endsWith(".json")
+    );
+    const records = [];
+    for (const f of files) {
+      const record = JSON.parse(await state.gh.readFile(f.path));
+      record.__path = f.path;
+      records.push(record);
+    }
+    sortRecords(records, state.schemas[name]);
+    state.items[name] = records;
+  }
+}
+
+function sortRecords(records, schema) {
+  const key = schema.sortBy || "slug";
+  records.sort((a, b) => {
+    const av = a[key], bv = b[key];
+    if (typeof av === "number" && typeof bv === "number") return av - bv;
+    return String(av ?? "").localeCompare(String(bv ?? ""));
+  });
+}
+
+/* ----------------------------------------------------------------- views */
+
+function renderLogin(error) {
+  document.body.className = "login-body";
+  document.body.replaceChildren(
+    el("div", { className: "login" },
+      el("h1", {}, "alexiux.com"),
+      el("p", { className: "sub" }, "Content management"),
+      error ? el("p", { className: "error" }, error) : null,
+      CONFIG.authWorker
+        ? el("button", { className: "btn primary", onclick: signInWithGitHub },
+            "Sign in with GitHub")
+        : el("p", { className: "hint" },
+            "Sign-in isn't configured yet. Deploy the auth worker, or paste a token below."),
+      el("details", { className: "token-fallback" },
+        el("summary", {}, "Use a personal access token"),
+        el("p", { className: "hint" },
+          "Fine-grained token with Contents: read and write on this repository. " +
+          "It stays in this tab only and is cleared when the tab closes."),
+        el("input", { type: "password", id: "pat", placeholder: "github_pat_..." }),
+        el("button", {
+          className: "btn",
+          onclick: async () => {
+            const v = $("#pat").value.trim();
+            if (!v) return;
+            saveToken(v);
+            await start();
+          },
+        }, "Continue")
+      )
+    )
+  );
+}
+
+function render() {
+  document.body.className = "";
+  document.body.replaceChildren(
+    el("aside", { className: "sidebar" },
+      el("div", { className: "brand" }, "alexiux.com"),
+      ...CONFIG.collections.map((name) =>
+        el("button", {
+          className: "nav-item" + (state.view.name === name ? " active" : ""),
+          onclick: () => go({ name }),
+        }, state.schemas[name].label)
+      ),
+      el("button", {
+        className: "nav-item" + (state.view.name === "media" ? " active" : ""),
+        onclick: () => go({ name: "media" }),
+      }, "Media"),
+      el("div", { className: "spacer" }),
+      el("div", { className: "user" },
+        state.user.avatar_url
+          ? el("img", { src: state.user.avatar_url, alt: "", width: 24, height: 24 })
+          : null,
+        el("span", {}, state.user.login),
+        el("button", {
+          className: "link",
+          onclick: () => { clearToken(); renderLogin(); },
+        }, "Sign out")
+      )
+    ),
+    el("main", { className: "main", id: "main" })
+  );
+  renderMain();
+}
+
+function go(view) {
+  if (state.dirty && !confirm("Discard unsaved changes?")) return;
+  state.dirty = false;
+  state.view = view;
+  if (document.querySelector(".sidebar")) render();
+  else renderMain();
+}
+
+function renderMain() {
+  const main = $("#main");
+  if (!main) return;
+  const { name, slug } = state.view;
+  if (name === "media") return main.replaceChildren(mediaView());
+  if (slug !== undefined) return main.replaceChildren(editorView(name, slug));
+  main.replaceChildren(listView(name));
+}
+
+/* ------------------------------------------------------------ list view */
+
+function listView(collection) {
+  const schema = state.schemas[collection];
+  const records = state.items[collection];
+
+  const rows = records.map((r) =>
+    el("tr", { className: r.draft ? "is-draft" : "" },
+      el("td", { className: "thumb-cell" },
+        r.thumbnail ? el("img", { src: "../" + r.thumbnail.replace(/^\//, ""), alt: "" }) : null),
+      el("td", {},
+        el("button", {
+          className: "link strong",
+          onclick: () => go({ name: collection, slug: r.slug }),
+        }, r[schema.titleField] || r.slug),
+        el("div", { className: "muted" }, "/" + (collection === "projects" ? "project/" : "") + r.slug)
+      ),
+      el("td", { className: "muted" }, r.year || ""),
+      el("td", { className: "muted" }, r.order ?? ""),
+      el("td", {}, r.draft ? el("span", { className: "badge" }, "Draft") : ""),
+      el("td", { className: "row-actions" },
+        schema.fixed ? null : el("button", {
+          className: "link danger",
+          onclick: () => removeRecord(collection, r),
+        }, "Delete")
+      )
+    )
+  );
+
+  return el("div", { className: "page" },
+    el("header", { className: "page-head" },
+      el("h1", {}, schema.label),
+      schema.fixed ? null : el("button", {
+        className: "btn primary",
+        onclick: () => newRecord(collection),
+      }, `New ${schema.singular.toLowerCase()}`)
+    ),
+    schema.note ? el("p", { className: "hint" }, schema.note) : null,
+    el("table", { className: "table" },
+      el("thead", {},
+        el("tr", {}, el("th", {}, ""), el("th", {}, "Name"), el("th", {}, "Year"),
+          el("th", {}, "Order"), el("th", {}, ""), el("th", {}, ""))),
+      el("tbody", {}, ...rows)
+    ),
+    records.length ? null : el("p", { className: "hint" }, "Nothing here yet.")
+  );
+}
+
+/* ---------------------------------------------------------- editor view */
+
+function editorView(collection, slug) {
+  const schema = state.schemas[collection];
+  const original = state.items[collection].find((r) => r.slug === slug);
+  if (!original) return el("p", { className: "hint" }, "Not found.");
+
+  // Edit a copy, so navigating away without saving changes nothing.
+  const draft = JSON.parse(JSON.stringify(original));
+  const groups = new Map();
+  for (const field of schema.fields) {
+    const g = field.group || "Details";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(field);
+  }
+
+  const status = el("span", { className: "status" });
+  const markDirty = () => {
+    state.dirty = true;
+    status.textContent = "Unsaved changes";
+    status.className = "status warn";
+  };
+
+  const body = [...groups.entries()].map(([groupName, fields]) =>
+    el("section", { className: "group" },
+      el("h2", {}, groupName),
+      ...fields.map((f) => fieldControl(f, draft, markDirty))
+    )
+  );
+
+  return el("div", { className: "page" },
+    el("header", { className: "page-head" },
+      el("div", {},
+        el("button", { className: "link", onclick: () => go({ name: collection }) },
+          "← " + schema.label),
+        el("h1", {}, draft[schema.titleField] || draft.slug)
+      ),
+      el("div", { className: "actions" },
+        status,
+        el("button", {
+          className: "btn primary",
+          onclick: (e) => saveRecord(collection, original, draft, e.target, status),
+        }, "Save")
+      )
+    ),
+    ...body
+  );
+}
+
+function fieldControl(field, draft, markDirty) {
+  const value = getField(draft, field.name) ?? "";
+  const id = "f_" + field.name.replace(/\./g, "_");
+  let input;
+
+  const onInput = (v) => { setField(draft, field.name, v); markDirty(); };
+
+  switch (field.type) {
+    case "toggle":
+      input = el("input", { type: "checkbox", id, checked: !!value });
+      input.onchange = () => onInput(input.checked);
+      break;
+
+    case "number":
+      input = el("input", { type: "number", id, value });
+      input.oninput = () => onInput(input.value === "" ? "" : Number(input.value));
+      break;
+
+    case "textarea":
+      input = el("textarea", { id, rows: 3, value });
+      input.oninput = () => onInput(input.value);
+      break;
+
+    case "html":
+      input = el("textarea", { id, rows: 18, value, className: "code" });
+      input.oninput = () => onInput(input.value);
+      break;
+
+    case "image":
+      input = el("div", { className: "image-field" },
+        el("input", { type: "text", id, value, placeholder: "/assets/uploads/..." }),
+        el("button", {
+          className: "btn small",
+          onclick: async () => {
+            const picked = await pickImage();
+            if (picked) {
+              $("#" + id).value = picked;
+              onInput(picked);
+              refreshPreview();
+            }
+          },
+        }, "Choose")
+      );
+      $("input", input).oninput = () => { onInput($("input", input).value); refreshPreview(); };
+      break;
+
+    case "slug":
+      input = el("input", { type: "text", id, value });
+      input.oninput = () => onInput(slugify(input.value));
+      break;
+
+    default:
+      input = el("input", { type: "text", id, value });
+      input.oninput = () => onInput(input.value);
+  }
+
+  const preview = el("div", { className: "img-preview" });
+  function refreshPreview() {
+    const v = getField(draft, field.name);
+    preview.replaceChildren(
+      v ? el("img", { src: "../" + String(v).replace(/^\//, ""), alt: "" }) : ""
+    );
+  }
+  if (field.type === "image") refreshPreview();
+
+  return el("div", { className: "field" },
+    el("label", { htmlFor: id }, field.label, field.required ? el("span", { className: "req" }, "*") : null),
+    input,
+    field.type === "image" ? preview : null,
+    field.help ? el("p", { className: "hint" }, field.help) : null
+  );
+}
+
+/* --------------------------------------------------------------- actions */
+
+async function saveRecord(collection, original, draft, button, status) {
+  const schema = state.schemas[collection];
+  for (const f of schema.fields) {
+    if (f.required && !getField(draft, f.name)) {
+      return toast(`${f.label} is required.`, "error");
+    }
+    const v = getField(draft, f.name);
+    if (f.pattern && v && !new RegExp(f.pattern).test(String(v))) {
+      return toast(`${f.label} doesn't look right.`, "error");
+    }
+  }
+
+  const renamed = draft.slug !== original.slug;
+  if (renamed && state.items[collection].some((r) => r.slug === draft.slug)) {
+    return toast(`Another entry already uses the slug "${draft.slug}".`, "error");
+  }
+
+  button.disabled = true;
+  status.textContent = "Saving…";
+  status.className = "status";
+
+  const payload = { ...draft };
+  delete payload.__path;
+  const path = `${schema.folder}/${draft.slug}.json`;
+
+  try {
+    await state.gh.writeFile(
+      path,
+      JSON.stringify(payload, null, 2) + "\n",
+      `CMS: update ${collection}/${draft.slug}`
+    );
+    if (renamed) {
+      await state.gh.deleteFile(original.__path, `CMS: rename ${original.slug} to ${draft.slug}`);
+    }
+    Object.assign(original, payload, { __path: path });
+    sortRecords(state.items[collection], schema);
+    state.dirty = false;
+    status.textContent = "Saved";
+    status.className = "status ok";
+    toast("Saved. The site rebuilds automatically — give it a minute.");
+    watchBuild();
+  } catch (err) {
+    status.textContent = "Not saved";
+    status.className = "status warn";
+    toast(err.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function newRecord(collection) {
+  const schema = state.schemas[collection];
+  const title = prompt(`Name of the new ${schema.singular.toLowerCase()}?`);
+  if (!title) return;
+  const slug = slugify(title);
+  if (!slug) return toast("That name doesn't produce a usable slug.", "error");
+  if (state.items[collection].some((r) => r.slug === slug)) {
+    return toast(`"${slug}" already exists.`, "error");
+  }
+
+  // Clone the chrome from an existing entry: head, wrapper and scripts are
+  // structural, and a new page can't render without them.
+  const template = state.items[collection][0];
+  if (!template) return toast("Need at least one existing entry to copy the layout from.", "error");
+
+  const record = {
+    slug,
+    title,
+    year: String(new Date().getFullYear()),
+    order: Math.max(0, ...state.items[collection].map((r) => r.order ?? 0)) + 1,
+    thumbnail: null,
+    draft: true,
+    seo: { title, ogTitle: title },
+    navActive: template.navActive,
+    head: template.head,
+    htmlOpen: template.htmlOpen,
+    bodyOpen: template.bodyOpen,
+    wrapperOpen: template.wrapperOpen,
+    wrapperClose: template.wrapperClose,
+    bodyHtml: template.bodyHtml,
+    footerHtml: template.footerHtml,
+    scriptsHtml: template.scriptsHtml,
+  };
+
+  try {
+    const path = `${schema.folder}/${slug}.json`;
+    await state.gh.writeFile(path, JSON.stringify(record, null, 2) + "\n",
+      `CMS: create ${collection}/${slug}`);
+    record.__path = path;
+    state.items[collection].push(record);
+    sortRecords(state.items[collection], schema);
+    toast(`Created "${title}" as a draft. Edit it, then untick Draft to publish.`);
+    go({ name: collection, slug });
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function removeRecord(collection, record) {
+  if (!confirm(`Delete "${record.title || record.slug}"? This cannot be undone from here.`)) return;
+  try {
+    await state.gh.deleteFile(record.__path, `CMS: delete ${collection}/${record.slug}`);
+    state.items[collection] = state.items[collection].filter((r) => r !== record);
+    renderMain();
+    toast("Deleted.");
+    watchBuild();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+/* ----------------------------------------------------------------- media */
+
+async function loadMedia(force = false) {
+  if (state.media && !force) return state.media;
+  const files = await state.gh.listDir(CONFIG.uploadPath);
+  state.media = files
+    .filter((f) => f.type === "file" && /\.(avif|webp|png|jpe?g|gif|svg)$/i.test(f.name))
+    .map((f) => ({ name: f.name, path: "/" + f.path }));
+  return state.media;
+}
+
+function mediaView() {
+  const grid = el("div", { className: "media-grid" }, "Loading…");
+
+  const refresh = async () => {
+    const files = await loadMedia(true);
+    grid.replaceChildren(
+      ...(files.length
+        ? files.map((f) =>
+            el("figure", { className: "media-item" },
+              el("img", { src: "../" + f.path.replace(/^\//, ""), alt: f.name, loading: "lazy" }),
+              el("figcaption", {}, f.name),
+              el("button", {
+                className: "link",
+                onclick: () => {
+                  navigator.clipboard?.writeText(f.path);
+                  toast("Path copied: " + f.path);
+                },
+              }, "Copy path")
+            )
+          )
+        : [el("p", { className: "hint" }, "No uploads yet.")])
+    );
+  };
+  refresh();
+
+  const fileInput = el("input", {
+    type: "file", accept: "image/*", multiple: true, hidden: true,
+  });
+  fileInput.onchange = async () => {
+    for (const file of fileInput.files) await uploadFile(file);
+    fileInput.value = "";
+    await refresh();
+  };
+
+  return el("div", { className: "page" },
+    el("header", { className: "page-head" },
+      el("h1", {}, "Media"),
+      el("button", { className: "btn primary", onclick: () => fileInput.click() }, "Upload images")
+    ),
+    el("p", { className: "hint" },
+      "Uploads are committed to the repository and served from /assets/uploads/."),
+    fileInput,
+    grid
+  );
+}
+
+async function uploadFile(file) {
+  const name = file.name.toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/^-+|-+$/g, "");
+  const path = `${CONFIG.uploadPath}/${Date.now()}-${name}`;
+  const buf = new Uint8Array(await file.arrayBuffer());
+  try {
+    await state.gh.writeFile(path, bytesToBase64(buf), `CMS: upload ${name}`, { base64: true });
+    toast(`Uploaded ${name}`);
+  } catch (err) {
+    toast(`Upload failed: ${err.message}`, "error");
+  }
+}
+
+function pickImage() {
+  return new Promise((resolve) => {
+    const grid = el("div", { className: "media-grid" }, "Loading…");
+    const overlay = el("div", { className: "overlay" },
+      el("div", { className: "modal" },
+        el("header", {},
+          el("h2", {}, "Choose an image"),
+          el("button", { className: "link", onclick: () => { overlay.remove(); resolve(null); } }, "Close")
+        ),
+        grid
+      )
+    );
+    loadMedia().then((files) => {
+      grid.replaceChildren(
+        ...(files.length
+          ? files.map((f) =>
+              el("button", { className: "media-item pick",
+                onclick: () => { overlay.remove(); resolve(f.path); } },
+                el("img", { src: "../" + f.path.replace(/^\//, ""), alt: f.name, loading: "lazy" }),
+                el("figcaption", {}, f.name)
+              ))
+          : [el("p", { className: "hint" }, "No uploads yet — add some under Media.")])
+      );
+    });
+    document.body.append(overlay);
+  });
+}
+
+/* ------------------------------------------------------------- publishing */
+
+let buildTimer = null;
+
+/**
+ * Report what the build actually did.
+ *
+ * A commit only means the content was saved; the site isn't updated until the
+ * workflow finishes, so this polls rather than claiming success up front.
+ */
+async function watchBuild() {
+  clearTimeout(buildTimer);
+  let tries = 0;
+  const poll = async () => {
+    tries += 1;
+    try {
+      const run = await state.gh.latestRun();
+      if (run && run.status !== "completed") {
+        setBuildStatus("Publishing…", "busy");
+      } else if (run?.conclusion === "success") {
+        setBuildStatus("Published", "ok");
+        return;
+      } else if (run?.conclusion) {
+        setBuildStatus(`Build ${run.conclusion}`, "error");
+        return;
+      }
+    } catch {
+      // Workflow may not exist yet; stay quiet rather than alarm the user.
+    }
+    if (tries < 20) buildTimer = setTimeout(poll, 6000);
+  };
+  buildTimer = setTimeout(poll, 4000);
+}
+
+function setBuildStatus(text, kind) {
+  let bar = $("#build-status");
+  if (!bar) {
+    bar = el("div", { id: "build-status" });
+    document.body.append(bar);
+  }
+  bar.className = kind;
+  bar.replaceChildren(
+    text,
+    kind === "ok" && CONFIG.siteUrl
+      ? el("a", { href: CONFIG.siteUrl, target: "_blank", rel: "noreferrer" }, "View site")
+      : null
+  );
+  if (kind === "ok") setTimeout(() => bar.remove(), 8000);
+}
+
+/* -------------------------------------------------------------- feedback */
+
+function toast(message, kind = "ok") {
+  const node = el("div", { className: `toast ${kind}` }, message);
+  document.body.append(node);
+  setTimeout(() => node.remove(), kind === "error" ? 7000 : 4000);
+}
+
+window.addEventListener("beforeunload", (e) => {
+  if (state.dirty) e.preventDefault();
+});
+
+start();

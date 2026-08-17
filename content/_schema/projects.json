@@ -1,0 +1,82 @@
+{
+  "label": "Projects",
+  "singular": "Project",
+  "folder": "content/projects",
+  "sortBy": "order",
+  "titleField": "title",
+  "fields": [
+    {
+      "name": "title",
+      "label": "Name",
+      "type": "text",
+      "required": true,
+      "help": "Shown in the Work grid and used as the page title."
+    },
+    {
+      "name": "slug",
+      "label": "Slug",
+      "type": "slug",
+      "required": true,
+      "sourceField": "title",
+      "help": "The URL: /project/<slug>/. Changing it breaks existing links."
+    },
+    {
+      "name": "year",
+      "label": "Year",
+      "type": "text",
+      "pattern": "^(19|20)\\d{2}$",
+      "help": "Four digits, e.g. 2025."
+    },
+    {
+      "name": "order",
+      "label": "Order",
+      "type": "number",
+      "help": "Lowest first in the Work grid."
+    },
+    {
+      "name": "thumbnail",
+      "label": "Thumbnail",
+      "type": "image",
+      "help": "The image shown in the Work grid."
+    },
+    {
+      "name": "draft",
+      "label": "Draft",
+      "type": "toggle",
+      "help": "Drafts stay editable here but are left out of the built site."
+    },
+    {
+      "name": "seo.title",
+      "label": "Browser tab title",
+      "type": "text",
+      "group": "SEO"
+    },
+    {
+      "name": "seo.description",
+      "label": "Meta description",
+      "type": "textarea",
+      "group": "SEO",
+      "help": "Roughly 150-160 characters shows in full in search results."
+    },
+    {
+      "name": "seo.ogTitle",
+      "label": "Share title",
+      "type": "text",
+      "group": "SEO",
+      "help": "Used when the page is shared on social media."
+    },
+    {
+      "name": "seo.ogImage",
+      "label": "Share image",
+      "type": "image",
+      "group": "SEO"
+    },
+    {
+      "name": "bodyHtml",
+      "label": "Page body",
+      "type": "html",
+      "group": "Content",
+      "help": "The case study itself. Edit text directly; use the media library to swap images."
+    }
+  ]
+}

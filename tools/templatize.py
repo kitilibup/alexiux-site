@@ -104,6 +104,54 @@ def project_slug(rel):
     return os.path.basename(rel)[:-len(".html")]
 
 
+def scrape_work_listing():
+    """Recover per-project fields from the /work collection list.
+
+    The case-study pages themselves don't carry their listing metadata, but the
+    grid on /work renders it for every project: display order, year, title and
+    thumbnail. Reading it here gives the CMS real typed fields instead of only
+    a body blob.
+    """
+    from regions import find_element  # local import: same package dir
+
+    path = os.path.join(DIST, "work.html")
+    if not os.path.exists(path):
+        return {}
+    html = open(path, encoding="utf-8").read()
+    grid = find_element(html, r'<div[^>]*class="projects-grid w-dyn-items"[^>]*>')
+    if not grid:
+        return {}
+
+    items, pos = {}, 0
+    inner = grid[2]
+    while True:
+        found = find_element(inner, r'<div[^>]*class="collection-item w-dyn-item"[^>]*>', pos)
+        if not found:
+            break
+        _, end, item = found
+        pos = end
+
+        href = re.search(r'href="/project/([^"]+)"', item)
+        if not href:
+            continue
+        thumb = re.search(r'src="([^"]*)"[^>]*class="project-thumbnail"', item)
+        texts = [htmllib.unescape(t.strip())
+                 for t in re.findall(r">([^<>]{1,80})<", item) if t.strip()]
+        # Rendered order is: index ("01"), year ("2025"), then the title.
+        num = next((t for t in texts if re.fullmatch(r"\d{1,2}", t)), None)
+        year = next((t for t in texts if re.fullmatch(r"(19|20)\d{2}", t)), None)
+        title = next((t for t in texts
+                      if t not in (num, year) and t.lower() != "view more"), None)
+
+        items[href.group(1)] = {
+            "order": int(num) if num else 999,
+            "year": year,
+            "title": title,
+            "thumbnail": thumb.group(1) if thumb else None,
+        }
+    return items
+
+
 def main():
     pages = {}
     for f in sorted(glob.glob(os.path.join(DIST, "**", "*.html"), recursive=True)):
@@ -143,6 +191,7 @@ def main():
     # they ride along in the page's own content file.
 
     # ---- per-page content ------------------------------------------------
+    work_fields = scrape_work_listing()
     counts = {"pages": 0, "projects": 0}
     for rel, r in pages.items():
         meta = extract_meta(r["head"])
@@ -167,7 +216,12 @@ def main():
         }
 
         if is_proj:
-            record["title"] = meta.get("ogTitle") or slug.replace("-", " ").title()
+            listing = work_fields.get(slug, {})
+            record["title"] = (listing.get("title") or meta.get("ogTitle")
+                               or slug.replace("-", " ").title())
+            record["year"] = listing.get("year")
+            record["order"] = listing.get("order", 999)
+            record["thumbnail"] = listing.get("thumbnail")
             record["draft"] = False
             write(os.path.join(CONTENT, "projects", slug + ".json"),
                   json.dumps(record, indent=2, ensure_ascii=False) + "\n")

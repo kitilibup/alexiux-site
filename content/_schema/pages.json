@@ -1,0 +1,40 @@
+{
+  "label": "Pages",
+  "singular": "Page",
+  "folder": "content/pages",
+  "sortBy": "slug",
+  "titleField": "slug",
+  "fixed": true,
+  "note": "These four pages are part of the site structure, so they can be edited but not added or removed.",
+  "fields": [
+    {
+      "name": "seo.title",
+      "label": "Browser tab title",
+      "type": "text",
+      "required": true
+    },
+    {
+      "name": "seo.description",
+      "label": "Meta description",
+      "type": "textarea",
+      "help": "Roughly 150-160 characters shows in full in search results."
+    },
+    {
+      "name": "seo.ogTitle",
+      "label": "Share title",
+      "type": "text",
+      "help": "Used when the page is shared on social media."
+    },
+    {
+      "name": "seo.ogImage",
+      "label": "Share image",
+      "type": "image"
+    },
+    {
+      "name": "bodyHtml",
+      "label": "Page body",
+      "type": "html",
+      "group": "Content"
+    }
+  ]
+}
