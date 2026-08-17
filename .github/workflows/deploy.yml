@@ -30,7 +30,13 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run build
+      - name: Build
+        # Project pages serve at /<repo>/, so root-absolute URLs need the
+        # prefix. The build step skips it automatically when a CNAME is
+        # present, since a custom domain serves at the root.
+        run: npm run build
+        env:
+          PATH_PREFIX: /alexiux-site
 
       - name: Fail if the build produced no pages
         run: |

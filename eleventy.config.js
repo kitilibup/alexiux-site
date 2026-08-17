@@ -1,7 +1,13 @@
+import fs from "node:fs";
+
 export default function (eleventyConfig) {
   // Mirrored CSS/JS/images and CMS uploads are served as-is.
   eleventyConfig.addPassthroughCopy("assets");
   eleventyConfig.addPassthroughCopy({ admin: "admin" });
+
+  // A CNAME at the repo root marks a custom-domain deploy; Pages reads it from
+  // the site root. Its presence also switches off the sub-path rewrite.
+  if (fs.existsSync("CNAME")) eleventyConfig.addPassthroughCopy("CNAME");
 
   // Webflow's markup is emitted verbatim, so nothing here should be
   // transformed or prettified - byte fidelity is the whole point.

@@ -6,7 +6,7 @@ compatibility_date = "2024-11-01"
 # Exact origin of the admin page - the token is posted only to this origin.
 # Use "https://<username>.github.io" for a project-pages deploy, or
 # "https://alexiux.com" once the custom domain is live.
-ALLOWED_ORIGIN = "https://REPLACE_WITH_GITHUB_USERNAME.github.io"
+ALLOWED_ORIGIN = "https://kitilibup.github.io"
 
 # GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are secrets, not vars:
 #   wrangler secret put GITHUB_CLIENT_ID

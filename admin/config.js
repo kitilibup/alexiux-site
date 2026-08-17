@@ -7,7 +7,7 @@
  * infrastructure exists. See auth-worker/README.md.
  */
 export const CONFIG = {
-  owner: "REPLACE_WITH_GITHUB_USERNAME",
+  owner: "kitilibup",
   repo: "alexiux-site",
   branch: "main",
 
@@ -21,5 +21,5 @@ export const CONFIG = {
   collections: ["projects", "pages"],
 
   // Shown as the "view site" link once a publish lands.
-  siteUrl: "",
+  siteUrl: "https://kitilibup.github.io/alexiux-site/",
 };
