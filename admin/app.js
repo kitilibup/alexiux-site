@@ -654,7 +654,7 @@ function richTextPanel(draft, fieldName, markDirty) {
   const linkRemove = el("button", { className: "btn small" }, "Remove");
   const linkBar = el("div", { className: "rt-linkbar", hidden: true },
     el("label", {}, "Link"), linkInput, linkApply, linkRemove,
-    el("button", { className: "link", onclick: () => { linkBar.hidden = true; } }, "Cancel")
+    el("button", { className: "link", onclick: () => { linkBar.hidden = true; updateFloatBar(); } }, "Cancel")
   );
 
   const openLinkEditor = () => {
@@ -667,7 +667,9 @@ function richTextPanel(draft, fieldName, markDirty) {
     }
     linkInput.value = existing ? existing.getAttribute("href") || "" : "";
     linkRemove.hidden = !existing;
-    linkBar.hidden = false;
+    floatBar.hidden = true;
+    const rect = (existing || savedRange).getBoundingClientRect();
+    positionFloating(linkBar, rect);
     linkInput.focus();
     linkInput.select();
   };
@@ -703,17 +705,61 @@ function richTextPanel(draft, fieldName, markDirty) {
     linkBar.hidden = true;
   };
 
+  const boldBtn = el("button", { className: "rt-btn", title: "Bold",
+    onmousedown: (e) => { e.preventDefault(); toggleWrap("strong", ["strong", "b"]); } }, "B");
+  const italBtn = el("button", { className: "rt-btn ital", title: "Italic",
+    onmousedown: (e) => { e.preventDefault(); toggleWrap("em", ["em", "i"]); } }, "I");
+  const linkBtn = el("button", { className: "rt-btn", title: "Add or edit a link",
+    onmousedown: (e) => { e.preventDefault(); openLinkEditor(); } }, "Link");
+
+  // Follows the selection, the way Webflow's text toolbar does.
+  const floatBar = el("div", { className: "rt-float", hidden: true },
+    boldBtn, italBtn, linkBtn);
+
   const toolbar = el("div", { className: "rt-toolbar" },
-    el("button", { className: "rt-btn", title: "Bold",
-      onmousedown: (e) => { e.preventDefault(); toggleWrap("strong", ["strong", "b"]); } }, "B"),
-    el("button", { className: "rt-btn ital", title: "Italic",
-      onmousedown: (e) => { e.preventDefault(); toggleWrap("em", ["em", "i"]); } }, "I"),
-    el("button", { className: "rt-btn", title: "Add or edit a link",
-      onmousedown: (e) => { e.preventDefault(); openLinkEditor(); } }, "Link"),
-    el("span", { className: "rt-sep" }),
-    el("span", { className: "hint" }, "Select text to format it, or click an image"),
+    el("span", { className: "hint" },
+      "Select text to format it \u00b7 click an image to edit it"),
     status
   );
+
+  /*
+   * The selection lives inside the iframe, the toolbar in this document, so
+   * the rectangle has to be translated across the frame boundary: iframe
+   * viewport coords -> parent coords -> offsets within the editor wrapper,
+   * which is the positioning context.
+   */
+  const positionFloating = (node, rect) => {
+    const fr = frame.getBoundingClientRect();
+    const wr = wrap.getBoundingClientRect();
+    node.hidden = false;   // measure only once it can be laid out
+    const w = node.offsetWidth;
+    const h = node.offsetHeight;
+
+    let top = fr.top - wr.top + rect.top - h - 8;
+    // Flip below the selection when there is no room above it.
+    if (top < 0) top = fr.top - wr.top + rect.bottom + 8;
+    let left = fr.left - wr.left + rect.left + rect.width / 2 - w / 2;
+    left = Math.max(4, Math.min(left, wr.width - w - 4));
+
+    node.style.top = `${Math.round(top)}px`;
+    node.style.left = `${Math.round(left)}px`;
+  };
+
+  const updateFloatBar = () => {
+    const doc = frame.contentDocument;
+    const sel = doc?.getSelection();
+    if (!linkBar.hidden) return;               // the link editor owns the space
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !root?.contains(sel.anchorNode)) {
+      floatBar.hidden = true;
+      return;
+    }
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    if (!rect.width && !rect.height) {
+      floatBar.hidden = true;
+      return;
+    }
+    positionFloating(floatBar, rect);
+  };
 
   // Settings for the selected image, alongside the canvas.
   const panelPreview = el("img", { className: "ip-preview", alt: "" });
@@ -769,9 +815,13 @@ function richTextPanel(draft, fieldName, markDirty) {
     }
 
     root.addEventListener("input", () => { commit(); fit(); });
-    for (const ev of ["mouseup", "keyup", "selectionchange"]) {
-      (ev === "selectionchange" ? doc : root).addEventListener(ev, saveSelection);
+    for (const ev of ["mouseup", "keyup"]) {
+      root.addEventListener(ev, () => { saveSelection(); updateFloatBar(); });
     }
+    doc.addEventListener("selectionchange", () => { saveSelection(); updateFloatBar(); });
+    doc.addEventListener("scroll", updateFloatBar, true);
+    window.addEventListener("scroll", updateFloatBar, true);
+    window.addEventListener("resize", updateFloatBar);
     root.addEventListener("blur", commit, true);
 
     // Pasting keeps text only, so foreign markup and styling never arrive.
@@ -859,8 +909,9 @@ function richTextPanel(draft, fieldName, markDirty) {
     body +
     "</div></div></body></html>";
 
-  return el("div", { className: "rt-wrap" }, toolbar, linkBar,
+  const wrap = el("div", { className: "rt-wrap" }, toolbar, floatBar, linkBar,
     el("div", { className: "rt-body" }, frame, imagePanel));
+  return wrap;
 }
 
 /** One image, inline in the document flow: preview, replace, alt text. */

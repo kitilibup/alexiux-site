@@ -424,3 +424,25 @@ button.media-item.tpl.selected { border-color: var(--accent); box-shadow: 0 0 0 
 .tpl-meta { display: block; color: var(--muted); font-size: 11px; }
 .modal-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
 .modal .field { margin-bottom: 18px; }
+
+/* Floating toolbars, anchored to the selection inside the editor frame. */
+.rt-wrap { position: relative; }
+.rt-float, .rt-linkbar {
+  position: absolute; z-index: 20;
+  background: var(--ink); border-radius: 7px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+  display: flex; align-items: center; gap: 3px; padding: 4px;
+}
+.rt-float[hidden], .rt-linkbar[hidden] { display: none; }
+.rt-float .rt-btn { color: var(--bg); min-width: 28px; height: 26px; }
+.rt-float .rt-btn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
+
+/* The link editor floats on the same anchor, so it needs the dark treatment. */
+.rt-linkbar { gap: 6px; padding: 6px 8px; border-bottom: 0; }
+.rt-linkbar label { color: rgba(255, 255, 255, 0.6); }
+.rt-linkbar input {
+  background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.2);
+  color: #fff; min-width: 210px; padding: 5px 8px;
+}
+.rt-linkbar .btn { background: rgba(255, 255, 255, 0.14); border-color: transparent; color: #fff; }
+.rt-linkbar .link { color: rgba(255, 255, 255, 0.7); }
