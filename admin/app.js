@@ -561,26 +561,153 @@ function richTextPanel(draft, fieldName, markDirty) {
   const frame = el("iframe", { className: "rt-frame", title: "Page content" });
   const status = el("span", { className: "rt-status" });
 
-  const exec = (cmd, value) => {
-    frame.contentDocument?.execCommand(cmd, false, value);
-    frame.contentWindow?.focus();
+  /*
+   * execCommand acts on the *focused* document's current selection. Focusing
+   * after the call is too late, and any dialog - a prompt(), or even clicking
+   * an input in the toolbar - collapses the selection before the command runs.
+   * So the range is captured as it changes and restored immediately before
+   * every command.
+   */
+  let savedRange = null;
+
+  const saveSelection = () => {
+    const sel = frame.contentDocument?.getSelection();
+    if (sel && sel.rangeCount && root?.contains(sel.anchorNode)) {
+      savedRange = sel.getRangeAt(0).cloneRange();
+    }
+  };
+
+  const restoreSelection = () => {
+    const sel = frame.contentDocument?.getSelection();
+    if (!sel || !savedRange) return false;
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+    return true;
+  };
+
+  /*
+   * Formatting is applied by rewriting the range directly rather than through
+   * execCommand, which only acts on the focused document and silently does
+   * nothing when focus is anywhere else - the toolbar, another pane, a dialog.
+   * It is also deprecated. Range surgery is deterministic and testable.
+   */
+  const ancestor = (tagNames) => {
+    const node = savedRange?.startContainer;
+    const start = node?.nodeType === 1 ? node : node?.parentElement;
+    return start?.closest?.(tagNames.join(",")) || null;
+  };
+
+  const unwrap = (node) => {
+    const parent = node.parentNode;
+    while (node.firstChild) parent.insertBefore(node.firstChild, node);
+    parent.removeChild(node);
+  };
+
+  /** Wrap the current selection, or unwrap it if already wrapped. */
+  const toggleWrap = (tagName, tagNames) => {
+    const doc = frame.contentDocument;
+    if (!doc || !savedRange) return null;
+
+    const existing = ancestor(tagNames);
+    if (existing && root.contains(existing)) {
+      unwrap(existing);
+      commit();
+      fit();
+      return null;
+    }
+    if (savedRange.collapsed) return null;
+
+    const node = doc.createElement(tagName);
+    const range = savedRange.cloneRange();
+    try {
+      node.appendChild(range.extractContents());
+      range.insertNode(node);
+    } catch {
+      return null;   // selection spanned element boundaries
+    }
+    // Keep the same text selected so formatting can be stacked.
+    const after = doc.createRange();
+    after.selectNodeContents(node);
+    savedRange = after.cloneRange();
+    const sel = doc.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(after);
+
     commit();
+    fit();
+    return node;
+  };
+
+  /** The <a> containing the current selection, if any. */
+  const currentLink = () => {
+    const node = savedRange?.startContainer;
+    const elNode = node?.nodeType === 1 ? node : node?.parentElement;
+    return elNode?.closest?.("a") || null;
+  };
+
+  const linkInput = el("input", { type: "url", placeholder: "https://example.com" });
+  const linkApply = el("button", { className: "btn small" }, "Apply");
+  const linkRemove = el("button", { className: "btn small" }, "Remove");
+  const linkBar = el("div", { className: "rt-linkbar", hidden: true },
+    el("label", {}, "Link"), linkInput, linkApply, linkRemove,
+    el("button", { className: "link", onclick: () => { linkBar.hidden = true; } }, "Cancel")
+  );
+
+  const openLinkEditor = () => {
+    saveSelection();
+    const existing = currentLink();
+    const sel = frame.contentDocument?.getSelection();
+    if (!existing && (!sel || sel.isCollapsed)) {
+      toast("Select some text first, then add the link.", "error");
+      return;
+    }
+    linkInput.value = existing ? existing.getAttribute("href") || "" : "";
+    linkRemove.hidden = !existing;
+    linkBar.hidden = false;
+    linkInput.focus();
+    linkInput.select();
+  };
+
+  linkApply.onclick = () => {
+    const url = linkInput.value.trim();
+    if (!url) return;
+    const existing = currentLink();
+    if (existing) {
+      existing.setAttribute("href", url);
+      commit();
+    } else {
+      const made = toggleWrap("a", ["a"]);
+      if (made) {
+        made.setAttribute("href", url);
+        // Links leaving the site should not hand over the tab or referrer.
+        if (/^https?:\/\//i.test(url)) {
+          made.setAttribute("target", "_blank");
+          made.setAttribute("rel", "noopener");
+        }
+        commit();
+      }
+    }
+    linkBar.hidden = true;
+  };
+
+  linkRemove.onclick = () => {
+    const existing = currentLink();
+    if (existing && root.contains(existing)) {
+      unwrap(existing);
+      commit();
+    }
+    linkBar.hidden = true;
   };
 
   const toolbar = el("div", { className: "rt-toolbar" },
     el("button", { className: "rt-btn", title: "Bold",
-      onmousedown: (e) => { e.preventDefault(); exec("bold"); } }, "B"),
+      onmousedown: (e) => { e.preventDefault(); toggleWrap("strong", ["strong", "b"]); } }, "B"),
     el("button", { className: "rt-btn ital", title: "Italic",
-      onmousedown: (e) => { e.preventDefault(); exec("italic"); } }, "I"),
-    el("button", { className: "rt-btn", title: "Add or remove a link",
-      onmousedown: (e) => {
-        e.preventDefault();
-        const url = prompt("Link URL (leave empty to remove):", "");
-        if (url === null) return;
-        exec(url ? "createLink" : "unlink", url || undefined);
-      } }, "Link"),
+      onmousedown: (e) => { e.preventDefault(); toggleWrap("em", ["em", "i"]); } }, "I"),
+    el("button", { className: "rt-btn", title: "Add or edit a link",
+      onmousedown: (e) => { e.preventDefault(); openLinkEditor(); } }, "Link"),
     el("span", { className: "rt-sep" }),
-    el("span", { className: "hint" }, "Click any image to replace it"),
+    el("span", { className: "hint" }, "Select text to format it, or click an image"),
     status
   );
 
@@ -638,6 +765,9 @@ function richTextPanel(draft, fieldName, markDirty) {
     }
 
     root.addEventListener("input", () => { commit(); fit(); });
+    for (const ev of ["mouseup", "keyup", "selectionchange"]) {
+      (ev === "selectionchange" ? doc : root).addEventListener(ev, saveSelection);
+    }
     root.addEventListener("blur", commit, true);
 
     // Pasting keeps text only, so foreign markup and styling never arrive.
@@ -725,7 +855,7 @@ function richTextPanel(draft, fieldName, markDirty) {
     body +
     "</div></div></body></html>";
 
-  return el("div", { className: "rt-wrap" }, toolbar,
+  return el("div", { className: "rt-wrap" }, toolbar, linkBar,
     el("div", { className: "rt-body" }, frame, imagePanel));
 }
 

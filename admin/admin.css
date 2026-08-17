@@ -97,6 +97,9 @@ body.login-body { display: grid; place-items: center; }
 
 .main { flex: 1; overflow: auto; }
 .page { max-width: 860px; padding: 28px 32px 80px; }
+/* The content editor renders the real page, so it needs the room. */
+.page:has(.rt-wrap) { max-width: none; }
+.page:has(.rt-wrap) .group:not(:has(.rt-wrap)) { max-width: 860px; }
 .page-head {
   display: flex;
   justify-content: space-between;
@@ -395,3 +398,17 @@ input.needs-alt { border-color: #d9a441; background: rgba(217, 164, 65, 0.07); }
 
 .ip-empty { margin: 0; }
 .image-panel .ip-fields[hidden] { display: none; }
+
+/* Link editor, shown under the toolbar. */
+.rt-linkbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 10px; background: var(--bg); border-bottom: 1px solid var(--line);
+}
+.rt-linkbar[hidden] { display: none; }
+.rt-linkbar label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+}
+.rt-linkbar input { flex: 1; min-width: 0; }
+.rt-linkbar button[hidden] { display: none; }
+
+.rt-frame { min-height: 560px; }
