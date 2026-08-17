@@ -1,0 +1,22 @@
+---
+permalink: /sitemap.xml
+eleventyExcludeFromCollections: true
+---
+{%- set base = site.url -%}
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{%- for p in cms.pages %}
+  <url>
+    <loc>{{ base }}{% if p.slug != 'index' %}/{{ p.slug }}/{% else %}/{% endif %}</loc>
+    <changefreq>monthly</changefreq>
+    <priority>{% if p.slug == 'index' %}1.0{% else %}0.8{% endif %}</priority>
+  </url>
+{%- endfor %}
+{%- for p in cms.projects %}
+  <url>
+    <loc>{{ base }}/project/{{ p.slug }}/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+{%- endfor %}
+</urlset>

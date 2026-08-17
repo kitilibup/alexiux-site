@@ -37,6 +37,8 @@ jobs:
         run: npm run build
         env:
           PATH_PREFIX: /alexiux-site
+          # Absolute URLs for sitemap.xml and robots.txt.
+          SITE_URL: https://kitilibup.github.io/alexiux-site
 
       - name: Fail if the build produced no pages
         run: |

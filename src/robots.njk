@@ -1,0 +1,11 @@
+---
+permalink: /robots.txt
+eleventyExcludeFromCollections: true
+---
+User-agent: *
+Allow: /
+
+# The CMS is not content and should never be indexed.
+Disallow: /admin/
+
+Sitemap: {{ site.url }}/sitemap.xml
