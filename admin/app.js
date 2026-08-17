@@ -584,13 +584,16 @@ function richTextPanel(draft, fieldName, markDirty) {
     if (doc?.body) frame.style.height = doc.body.scrollHeight + 40 + "px";
   };
 
-  frame.addEventListener("load", () => {
+  let ready = false;
+
+  const init = () => {
+    if (ready) return;
     const doc = frame.contentDocument;
-    root = doc.getElementById("cms-root");
+    root = doc?.getElementById("cms-root");
     if (!root) return;
+    ready = true;
 
     root.contentEditable = "true";
-    doc.designMode = "off";
 
     // Keep the page's own structure intact: only text and images are editable.
     for (const node of root.querySelectorAll("script,iframe,video,svg")) {
@@ -627,7 +630,16 @@ function richTextPanel(draft, fieldName, markDirty) {
 
     fit();
     setTimeout(fit, 600);
-  });
+  };
+
+  // srcdoc doesn't reliably fire `load` before the document is reachable, so
+  // initialisation is attempted from both, and init() is idempotent.
+  frame.addEventListener("load", init);
+  const poll = setInterval(() => {
+    init();
+    if (ready) clearInterval(poll);
+  }, 60);
+  setTimeout(() => clearInterval(poll), 10000);
 
   // srcdoc rather than document.write: it keeps the frame same-origin while
   // letting the site's stylesheets load by relative path.
