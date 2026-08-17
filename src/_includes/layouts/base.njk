@@ -1,0 +1,27 @@
+{#-
+  Reassembles a page from its captured regions.
+
+  Order matters and mirrors the original document exactly:
+    html open -> head -> body open -> global styles -> [preloader] ->
+    page-wrapper( navbar -> content -> footer -> scroll-up ) -> scripts
+
+  Everything is emitted with `safe`: these regions are verbatim Webflow output,
+  already escaped as intended, and re-escaping would corrupt them.
+-#}
+{{- page_.htmlOpen | safe -}}
+<head>{{- page_.headHtml | safe -}}</head>
+{{- page_.bodyOpen | safe -}}
+{%- include "partials/global-styles.njk" -%}
+{%- if page_.hasPreloader %}{% include "partials/preloader.njk" %}{% endif -%}
+{{- page_.wrapperOpen | safe -}}
+{{- page_.navbarHtml | safe -}}
+{{- page_.bodyHtml | safe -}}
+{{- page_.footerHtml | safe -}}
+{%- if isProject -%}
+  {%- include "partials/scroll-up-project.njk" -%}
+{%- else -%}
+  {%- include "partials/scroll-up.njk" -%}
+{%- endif -%}
+{{- page_.wrapperClose | safe -}}
+{{- page_.scriptsHtml | safe -}}
+</body></html>

@@ -1,0 +1,11 @@
+---
+pagination:
+  data: cms.pages
+  size: 1
+  alias: page_
+permalink: "{% if page_.slug == 'index' %}/index.html{% else %}/{{ page_.slug }}/index.html{% endif %}"
+layout: layouts/base.njk
+isProject: false
+eleventyComputed:
+  title: "{{ page_.seo.title }}"
+---

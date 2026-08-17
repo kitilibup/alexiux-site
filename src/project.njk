@@ -1,0 +1,11 @@
+---
+pagination:
+  data: cms.projects
+  size: 1
+  alias: page_
+permalink: "/project/{{ page_.slug }}/index.html"
+layout: layouts/base.njk
+isProject: true
+eleventyComputed:
+  title: "{{ page_.title }}"
+---
