@@ -42,6 +42,58 @@ const slugify = (s) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
+const escapeAttr = (s) =>
+  String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+const unescapeAttr = (s) =>
+  String(s).replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+
+/* ------------------------------------------------------- body images ---
+ * The case-study bodies are verbatim Webflow markup, so images live inside
+ * the HTML rather than in a field of their own. Rather than make you edit
+ * raw markup, these pull every <img> out for editing and write the change
+ * back into the exact tag it came from - the rest of the HTML is untouched.
+ */
+
+const IMG_TAG_RE = /<img\b[^>]*>/gi;
+
+const getAttr = (tag, name) => {
+  const m = tag.match(new RegExp(`\\b${name}="([^"]*)"`, "i"));
+  return m ? unescapeAttr(m[1]) : "";
+};
+
+function setAttr(tag, name, value) {
+  const existing = new RegExp(`\\s${name}="[^"]*"`, "i");
+  const attr = ` ${name}="${escapeAttr(value)}"`;
+  if (existing.test(tag)) return tag.replace(existing, attr);
+  // Insert before the closing bracket, keeping any self-closing slash.
+  return tag.replace(/\s*(\/?)>$/, (m, slash) => `${attr}${slash ? " /" : ""}>`);
+}
+
+const parseBodyImages = (html) =>
+  [...String(html || "").matchAll(IMG_TAG_RE)].map((m, i) => ({
+    index: i,
+    tag: m[0],
+    src: getAttr(m[0], "src"),
+    alt: getAttr(m[0], "alt"),
+  }));
+
+/** Replace the nth <img> tag, leaving every other byte of the body alone. */
+function updateBodyImage(html, index, patch) {
+  let i = 0;
+  return String(html).replace(IMG_TAG_RE, (tag) => {
+    if (i++ !== index) return tag;
+    let out = tag;
+    if (patch.src !== undefined) {
+      out = setAttr(out, "src", patch.src);
+      // A stale srcset would keep winning over the new src.
+      out = out.replace(/\s(?:srcset|data-src|sizes)="[^"]*"/gi, "");
+    }
+    if (patch.alt !== undefined) out = setAttr(out, "alt", patch.alt);
+    return out;
+  });
+}
+
 /* ------------------------------------------------------------------ auth */
 
 function saveToken(token) {
@@ -300,12 +352,127 @@ function editorView(collection, slug) {
   );
 }
 
+/** Recommended lengths before search engines start truncating. */
+const SEO_LIMITS = { "seo.title": 60, "seo.description": 160 };
+
+/** Live approximation of the Google result for this page. */
+function seoPreview(draft) {
+  const node = el("div", { className: "seo-preview" });
+
+  const paint = () => {
+    const title = getField(draft, "seo.title") || draft.title || draft.slug;
+    const desc = getField(draft, "seo.description") || "";
+    const slug = draft.slug === "index" ? "" : draft.slug;
+    node.replaceChildren(
+      el("div", { className: "seo-url" }, "alexiux.com" + (slug ? " › " + slug : "")),
+      el("div", { className: "seo-title" }, String(title).slice(0, 60)),
+      el("div", { className: "seo-desc" },
+        desc ? desc.slice(0, 160) : "No meta description — search engines will invent one from the page text."),
+      el("p", { className: "hint" },
+        "This is roughly how the page appears in search results.")
+    );
+  };
+
+  paint();
+  node.addEventListener("seo:refresh", paint);
+  return node;
+}
+
+const refreshSeoPreview = () =>
+  document.querySelector(".seo-preview")?.dispatchEvent(new CustomEvent("seo:refresh"));
+
+/**
+ * Every image in the page body, with a preview, a replace button and an alt
+ * field. Edits are written straight back into the markup.
+ */
+function bodyImagesPanel(draft, fieldName, markDirty) {
+  const wrap = el("div", { className: "img-manager" });
+
+  const rebuild = () => {
+    const images = parseBodyImages(getField(draft, fieldName));
+    if (!images.length) {
+      wrap.replaceChildren(el("p", { className: "hint" }, "No images in this page body."));
+      return;
+    }
+
+    wrap.replaceChildren(
+      el("p", { className: "hint" },
+        `${images.length} image${images.length === 1 ? "" : "s"}. ` +
+        "Alt text describes the image for screen readers and search engines; " +
+        "leave it empty only for purely decorative images."),
+      ...images.map((img) => {
+        const preview = el("img", {
+          src: "../" + img.src.replace(/^\//, ""),
+          alt: "",
+          loading: "lazy",
+        });
+        preview.onerror = () => preview.classList.add("missing");
+
+        const srcLabel = el("code", { className: "src-label" },
+          img.src.split("/").pop() || img.src);
+
+        const altInput = el("input", {
+          type: "text",
+          value: img.alt,
+          placeholder: "Describe this image…",
+          className: img.alt ? "" : "needs-alt",
+        });
+        altInput.oninput = () => {
+          setField(draft, fieldName,
+            updateBodyImage(getField(draft, fieldName), img.index, { alt: altInput.value }));
+          altInput.className = altInput.value ? "" : "needs-alt";
+          markDirty();
+        };
+
+        const replace = el("button", {
+          className: "btn small",
+          onclick: async () => {
+            const picked = await pickImage();
+            if (!picked) return;
+            setField(draft, fieldName,
+              updateBodyImage(getField(draft, fieldName), img.index, { src: picked }));
+            markDirty();
+            rebuild();
+          },
+        }, "Replace");
+
+        return el("div", { className: "img-row" },
+          el("div", { className: "img-row-thumb" }, preview),
+          el("div", { className: "img-row-body" },
+            el("div", { className: "img-row-top" }, srcLabel, replace),
+            el("label", { className: "alt-label" }, "Alt text"),
+            altInput
+          )
+        );
+      })
+    );
+  };
+
+  rebuild();
+  return wrap;
+}
+
 function fieldControl(field, draft, markDirty) {
   const value = getField(draft, field.name) ?? "";
   const id = "f_" + field.name.replace(/\./g, "_");
   let input;
 
-  const onInput = (v) => { setField(draft, field.name, v); markDirty(); };
+  const limit = SEO_LIMITS[field.name];
+  const counter = limit ? el("span", { className: "counter" }) : null;
+
+  const paintCounter = () => {
+    if (!counter) return;
+    const n = String(getField(draft, field.name) ?? "").length;
+    counter.textContent = `${n}/${limit}`;
+    counter.className = "counter" + (n > limit ? " over" : n === 0 ? " empty" : " ok");
+  };
+
+  const onInput = (v) => {
+    setField(draft, field.name, v);
+    markDirty();
+    paintCounter();
+    if (field.name.startsWith("seo.") || field.name === "title") refreshSeoPreview();
+  };
 
   switch (field.type) {
     case "toggle":
@@ -321,6 +488,10 @@ function fieldControl(field, draft, markDirty) {
     case "textarea":
       input = el("textarea", { id, rows: 3, value });
       input.oninput = () => onInput(input.value);
+      break;
+
+    case "seoPreview":
+      input = seoPreview(draft);
       break;
 
     case "html":
@@ -351,6 +522,10 @@ function fieldControl(field, draft, markDirty) {
       input.oninput = () => onInput(slugify(input.value));
       break;
 
+    case "images":
+      input = bodyImagesPanel(draft, field.name, markDirty);
+      break;
+
     default:
       input = el("input", { type: "text", id, value });
       input.oninput = () => onInput(input.value);
@@ -365,8 +540,13 @@ function fieldControl(field, draft, markDirty) {
   }
   if (field.type === "image") refreshPreview();
 
+  if (counter) paintCounter();
+
   return el("div", { className: "field" },
-    el("label", { htmlFor: id }, field.label, field.required ? el("span", { className: "req" }, "*") : null),
+    el("label", { htmlFor: id },
+      field.label,
+      field.required ? el("span", { className: "req" }, "*") : null,
+      counter),
     input,
     field.type === "image" ? preview : null,
     field.help ? el("p", { className: "hint" }, field.help) : null
@@ -550,37 +730,80 @@ async function uploadFile(file) {
   try {
     await state.gh.writeFile(path, bytesToBase64(buf), `CMS: upload ${name}`, { base64: true });
     toast(`Uploaded ${name}`);
+    // Invalidate the cache so the new file shows without a reload.
+    state.media = null;
+    return "/" + path;
   } catch (err) {
     toast(`Upload failed: ${err.message}`, "error");
+    return null;
   }
 }
 
+/**
+ * Image picker. Shows previously uploaded files and the images already used on
+ * the site, and can upload a new one without leaving the editor.
+ */
 function pickImage() {
   return new Promise((resolve) => {
     const grid = el("div", { className: "media-grid" }, "Loading…");
+    const close = (value) => { overlay.remove(); resolve(value); };
+
+    const fileInput = el("input", { type: "file", accept: "image/*", multiple: false, hidden: true });
+    const uploadBtn = el("button", { className: "btn primary small", onclick: () => fileInput.click() },
+      "Upload new image");
+
+    fileInput.onchange = async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = "Uploading…";
+      const uploaded = await uploadFile(file);
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = "Upload new image";
+      if (uploaded) close(uploaded);
+    };
+
     const overlay = el("div", { className: "overlay" },
       el("div", { className: "modal" },
         el("header", {},
           el("h2", {}, "Choose an image"),
-          el("button", { className: "link", onclick: () => { overlay.remove(); resolve(null); } }, "Close")
+          el("div", { className: "actions" }, uploadBtn,
+            el("button", { className: "link", onclick: () => close(null) }, "Close"))
         ),
+        fileInput,
         grid
       )
     );
-    loadMedia().then((files) => {
+
+    Promise.all([loadMedia(), loadSiteImages()]).then(([uploads, existing]) => {
+      const seen = new Set(uploads.map((f) => f.path));
+      const files = [...uploads, ...existing.filter((f) => !seen.has(f.path))];
       grid.replaceChildren(
         ...(files.length
           ? files.map((f) =>
-              el("button", { className: "media-item pick",
-                onclick: () => { overlay.remove(); resolve(f.path); } },
+              el("button", { className: "media-item pick", onclick: () => close(f.path) },
                 el("img", { src: "../" + f.path.replace(/^\//, ""), alt: f.name, loading: "lazy" }),
                 el("figcaption", {}, f.name)
               ))
-          : [el("p", { className: "hint" }, "No uploads yet — add some under Media.")])
+          : [el("p", { className: "hint" }, "No images yet — upload one above.")])
       );
     });
+
     document.body.append(overlay);
   });
+}
+
+/**
+ * Images already shipped with the site. Without these the picker would only
+ * offer new uploads, making it impossible to reuse an existing asset.
+ */
+async function loadSiteImages() {
+  if (state.siteImages) return state.siteImages;
+  const files = await state.gh.listDir("assets/img");
+  state.siteImages = files
+    .filter((f) => f.type === "file" && /\.(avif|webp|png|jpe?g|gif|svg)$/i.test(f.name))
+    .map((f) => ({ name: f.name, path: "/" + f.path }));
+  return state.siteImages;
 }
 
 /* ------------------------------------------------------------- publishing */

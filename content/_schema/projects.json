@@ -46,6 +46,13 @@
       "help": "Drafts stay editable here but are left out of the built site."
     },
     {
+      "name": "bodyHtml",
+      "label": "Images in this case study",
+      "type": "images",
+      "group": "Images",
+      "help": "Replace an image or give it alt text. Changes are written straight into the page."
+    },
+    {
       "name": "seo.title",
       "label": "Browser tab title",
       "type": "text",
@@ -69,6 +76,12 @@
       "name": "seo.ogImage",
       "label": "Share image",
       "type": "image",
+      "group": "SEO"
+    },
+    {
+      "name": "__seoPreview",
+      "label": "Search result preview",
+      "type": "seoPreview",
       "group": "SEO"
     },
     {
